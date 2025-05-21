@@ -36,18 +36,18 @@ class GoogleImageScraper():
         if (type(number_of_images)!=int):
             print("[Error] Number of images must be integer value.")
             return
-        if not os.path.exists(image_path):
-            print("[INFO] Image path not found. Creating a new folder.")
-            os.makedirs(os.path.join(image_path, search_key)) # Ensure specific search key folder is made if base path doesn't exist
+        # image_path is now the specific path like "photos/Category/ClassName"
+        # search_key is the ClassName
         
         self.search_key = search_key
         self.number_of_images = number_of_images
         self.webdriver_path = webdriver_path
-        # self.image_path is now set after search_key to include it
-        self.image_path = os.path.join(image_path, self.search_key)
-        if not os.path.exists(self.image_path):
-            os.makedirs(self.image_path)
+        self.image_path = image_path # image_path is the full target directory, e.g., photos/Go/Sinangag
 
+        if not os.path.exists(self.image_path):
+            print(f"[INFO] Image path {self.image_path} not found. Creating a new folder.")
+            os.makedirs(self.image_path) # Create the specific directory if it doesn't exist
+        
         self.headless=headless
         self.min_resolution = min_resolution
         self.max_resolution = max_resolution
