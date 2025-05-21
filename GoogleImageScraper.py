@@ -46,9 +46,10 @@ class GoogleImageScraper():
             try:
                 #try going to www.google.com
                 options = Options()
+                options.binary_location = r"C:\Users\Marc\AppData\Local\Google\Chrome SxS\Application\chrome.exe"
                 if(headless):
                     options.add_argument('--headless')
-                driver = webdriver.Chrome(webdriver_path, chrome_options=options)
+                driver = webdriver.Chrome(executable_path=webdriver_path, options=options)
                 driver.set_window_size(1400,1050)
                 driver.get("https://www.google.com")
                 try:
@@ -57,11 +58,19 @@ class GoogleImageScraper():
                     continue
             except Exception as e:
                 #update chromedriver
-                pattern = '(\d+\.\d+\.\d+\.\d+)'
-                version = list(set(re.findall(pattern, str(e))))[0]
-                is_patched = patch.download_lastest_chromedriver(version)
-                if (not is_patched):
-                    exit("[ERR] Please update the chromedriver.exe in the webdriver folder according to your chrome version:https://chromedriver.chromium.org/downloads")
+                pattern = r'(\d+\.\d+\.\d+\.\d+)'
+                versions_found = list(set(re.findall(pattern, str(e))))
+                if versions_found:
+                    version = versions_found[0]
+                    print(f"[INFO] Attempting to update ChromeDriver for version {version} based on error: {e}")
+                    is_patched = patch.download_lastest_chromedriver(version)
+                else:
+                    print(f"[WARN] Could not determine Chrome version from error message: {e}")
+                    print("[INFO] Attempting to download the latest ChromeDriver as a fallback.")
+                    is_patched = patch.download_lastest_chromedriver() # Attempt to download latest if version unknown
+                
+                if not is_patched:
+                    exit("[ERR] ChromeDriver update failed. Please ensure Chrome is installed and update the chromedriver.exe in the webdriver folder according to your Chrome version: https://chromedriver.chromium.org/downloads. Also, verify that the Chrome browser binary can be found by Selenium.")
 
         self.driver = driver
         self.search_key = search_key

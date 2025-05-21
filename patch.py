@@ -70,7 +70,9 @@ def download_lastest_chromedriver(current_chrome_version=""):
         file_name = driver_url.split("/")[-1]
         app_path = os.getcwd()
         chromedriver_path = os.path.normpath(os.path.join(app_path, 'webdriver', webdriver_executable()))
-        file_path = os.path.normpath(os.path.join(app_path, 'webdriver', file_name))
+        webdriver_dir = os.path.normpath(os.path.join(app_path, 'webdriver'))
+        os.makedirs(webdriver_dir, exist_ok=True)
+        file_path = os.path.normpath(os.path.join(webdriver_dir, file_name))
         urllib.request.urlretrieve(driver_url, file_path)
 
         # Unzip the file into folde
