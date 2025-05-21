@@ -1,76 +1,33 @@
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import NoSuchElementException
-
-import time
-import os
-import re
 from cache_utils import load_json_data, save_json_data, remove_file_if_exists
-import patch
+import time
 
 class UrlFetcher:
-    def __init__(self, config, driver=None):
+    def __init__(self, config, webdriver_manager):
         self.config = config
-        self.driver = driver
+        self.webdriver_manager = webdriver_manager
+        self.driver = self.webdriver_manager.driver
 
-        self.search_key = self.config.search_key_for_query
-        self.number_of_images = self.config.number_of_images
+    @property
+    def search_key(self):
+        return self.config.search_key_for_query
+
+    @property
+    def number_of_images(self):
+        return self.config.number_of_images
         
-        self.url_cache_file = self.config.get_url_cache_file()
-        self.url_checkpoint_file = self.config.get_url_checkpoint_file()
+    @property
+    def url_cache_file(self):
+        return self.config.get_url_cache_file()
 
-        if not self.driver:
-            self._initialize_driver()
+    @property
+    def url_checkpoint_file(self):
+        return self.config.get_url_checkpoint_file()
 
-        self.url = f"https://www.google.com/search?q={self.search_key}&source=lnms&tbm=isch&sa=X&ved=2ahUKEwie44_AnqLpAhUhBWMBHUFGD90Q_AUoAXoECBUQAw&biw=1920&bih=947"
-
-
-    def _initialize_driver(self):
-        if not os.path.isfile(self.config.webdriver_path):
-            is_patched = patch.download_lastest_chromedriver()
-            if not is_patched:
-                exit("[ERR] Please update the chromedriver.exe in the webdriver folder according to your chrome version:https://chromedriver.chromium.org/downloads")
-
-        for _ in range(1):
-            try:
-                options = Options()
-                options.binary_location = r"C:\Users\Marc\AppData\Local\Google\Chrome SxS\Application\chrome.exe"
-                if self.config.headless:
-                    options.add_argument('--headless')
-                driver = webdriver.Chrome(executable_path=self.config.webdriver_path, options=options)
-                driver.set_window_size(1400,1050)
-                driver.get("https://www.google.com")
-                try:
-                    WebDriverWait(driver, 5).until(EC.element_to_be_clickable((By.ID, "W0wltc"))).click()
-                except Exception as e:
-                    print(f"[INFO] Cookie consent dialog not found or clickable: {e}")
-                    pass
-                self.driver = driver
-                return
-            except Exception as e:
-                pattern = r'(\d+\.\d+\.\d+\.\d+)'
-                versions_found = list(set(re.findall(pattern, str(e))))
-                if versions_found:
-                    version = versions_found[0]
-                    print(f"[INFO] Attempting to update ChromeDriver for version {version} based on error: {e}")
-                    is_patched = patch.download_lastest_chromedriver(version)
-                else:
-                    print(f"[WARN] Could not determine Chrome version from error message: {e}")
-                    print("[INFO] Attempting to download the latest ChromeDriver as a fallback.")
-                    is_patched = patch.download_lastest_chromedriver()
-
-                if not is_patched:
-                    raise RuntimeError(
-                        "[ERR] ChromeDriver update failed. Please ensure Chrome is installed and "
-                        "update the chromedriver.exe in the webdriver folder according to your "
-                        "Chrome version: https://chromedriver.chromium.org/downloads. Also, "
-                        "verify that the Chrome browser binary can be found by Selenium."
-                    )
-        raise RuntimeError("[ERR] Failed to initialize WebDriver after retries.")
-
+    @property
+    def google_search_url(self):
+        return f"https://www.google.com/search?q={self.search_key}&source=lnms&tbm=isch&sa=X&ved=2ahUKEwie44_AnqLpAhUhBWMBHUFGD90Q_AUoAXoECBUQAw&biw=1920&bih=947"
 
     def find_image_urls(self):
         print(f"[INFO] Attempting to gather image links for '{self.search_key}'...")
@@ -90,9 +47,6 @@ class UrlFetcher:
             
             if count >= self.number_of_images:
                 print(f"[INFO] Loaded {count} (>= requested {self.number_of_images}) unique image URLs from cache for '{self.search_key}'.")
-                if hasattr(self, 'driver') and self.driver:
-                    try: self.driver.quit()
-                    except Exception as e: print(f"[WARN] Error quitting WebDriver (cache hit): {e}")
                 return image_urls[:self.number_of_images]
             else:
                 print(f"[INFO] Cache for '{self.search_key}' has {count} unique URLs. Need {self.number_of_images - count} more.")
@@ -113,17 +67,9 @@ class UrlFetcher:
         else:
             missed_count = 0
 
-        if not (hasattr(self, 'driver') and self.driver):
-            print("[ERROR] WebDriver not initialized before find_image_urls attempt.")
-            try:
-                self._initialize_driver()
-            except RuntimeError as e:
-                print(f"[ERROR] Critical: Failed to initialize driver during find_image_urls: {e}")
-                return []
-
         if count < self.number_of_images:
             print(f"[INFO] Gathering remaining image links online for '{self.search_key}'...")
-            self.driver.get(self.url)
+            self.driver.get(self.google_search_url)
             time.sleep(3)
         
         search_string = '//*[@id="rso"]/div/div/div[1]/div/div/div[%s]/div[2]/h3/a/div/div/div/g-img'
@@ -218,21 +164,5 @@ class UrlFetcher:
         remove_file_if_exists(self.url_checkpoint_file)
         print(f"[INFO] URL fetching checkpoint cleared for '{self.search_key}'.")
 
-        if hasattr(self, 'driver') and self.driver:
-            try:
-                self.driver.quit()
-                print("[INFO] WebDriver quit after finding image URLs.")
-            except Exception as e:
-                print(f"[WARN] Error quitting WebDriver after finding URLs: {e}")
         print("[INFO] Google image URL gathering ended.")
         return image_urls[:self.number_of_images]
-
-    def close_driver(self):
-        if hasattr(self, 'driver') and self.driver:
-            try:
-                self.driver.quit()
-                print("[INFO] WebDriver explicitly closed via close_driver().")
-            except Exception as e:
-                print(f"[WARN] Error quitting WebDriver during explicit close: {e}")
-            finally:
-                self.driver = None

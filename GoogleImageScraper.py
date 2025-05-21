@@ -3,21 +3,11 @@ from cache_utils import ensure_cache_dir
 from config import ScraperConfig
 from url_fetcher import UrlFetcher
 from image_downloader import ImageDownloader
+from webdriver_manager import WebDriverManager
 
 class GoogleImageScraper():
-    def __init__(self, webdriver_path, image_path, search_key="cat", advanced_suffix="", number_of_images=1, headless=True, max_missed=10):
-        if not isinstance(number_of_images, int):
-            raise ValueError("Number of images must be an integer value.")
-        
-        self.config = ScraperConfig(
-            webdriver_path=webdriver_path,
-            image_path=image_path,
-            search_key=search_key,
-            advanced_suffix=advanced_suffix,
-            number_of_images=number_of_images,
-            headless=headless,
-            max_missed=max_missed
-        )
+    def __init__(self, config: ScraperConfig):
+        self.config = config
 
         if not os.path.exists(self.config.image_path):
             print(f"[INFO] Image path {self.config.image_path} not found. Creating a new folder.")
@@ -25,7 +15,8 @@ class GoogleImageScraper():
         
         ensure_cache_dir(self.config.cache_dir)
 
-        self.url_fetcher = UrlFetcher(config=self.config)
+        self.webdriver_manager = WebDriverManager(config=self.config)
+        self.url_fetcher = UrlFetcher(config=self.config, webdriver_manager=self.webdriver_manager)
         self.image_downloader = ImageDownloader(config=self.config)
         print(f"[INFO] GoogleImageScraper initialized for search: '{self.config.search_key_for_query}'")
 
@@ -54,5 +45,5 @@ class GoogleImageScraper():
 
     def close(self):
         print(f"[INFO] Closing GoogleImageScraper for '{self.config.search_key_for_query}'.")
-        if hasattr(self, 'url_fetcher') and self.url_fetcher:
-            self.url_fetcher.close_driver()
+        if hasattr(self, 'webdriver_manager') and self.webdriver_manager:
+            self.webdriver_manager.close_driver()

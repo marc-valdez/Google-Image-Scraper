@@ -8,11 +8,13 @@ from cache_utils import load_json_data, save_json_data, remove_file_if_exists
 class ImageDownloader:
     def __init__(self, config):
         self.config = config
-        self.download_checkpoint_file = self.config.get_download_checkpoint_file()
-        
+
         if not os.path.exists(self.config.image_path):
             os.makedirs(self.config.image_path)
 
+    @property
+    def download_checkpoint_file(self):
+        return self.config.get_download_checkpoint_file()
 
     def save_images(self, image_urls, keep_filenames):
         if not image_urls:
@@ -23,6 +25,7 @@ class ImageDownloader:
         print(f"[INFO] Attempting to save {len(image_urls)} images for '{effective_search_key}'...")
 
         start_index = 0
+        # Accessing the property here
         download_checkpoint = load_json_data(self.download_checkpoint_file)
         urls_hash = hash(tuple(sorted(image_urls)))
 
@@ -33,6 +36,7 @@ class ImageDownloader:
             downloaded_previously_count = download_checkpoint.get('saved_count_so_far', 0)
             print(f"[INFO] Resuming download for '{effective_search_key}' from index {start_index}. Previously saved: {downloaded_previously_count}.")
         else:
+            # Accessing the property here
             save_json_data(self.download_checkpoint_file, {
                 'search_key_ref': effective_search_key,
                 'all_image_urls_hash': urls_hash,
