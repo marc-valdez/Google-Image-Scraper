@@ -5,29 +5,23 @@ from GoogleImageScraper import GoogleImageScraper
 from config import ScraperConfig
 
 
-def worker_thread(category_name, search_key, settings_file='settings.ini'):
+def worker_thread(category_name, search_key, num_images=10, headless=True):
     """Worker thread function to scrape images for a given search key within a category."""
-    
     try:
-        # Create ScraperConfig instance - it will load its own settings from settings.ini
-        config = ScraperConfig(
-            image_path=os.path.join(os.getcwd(), "output", category_name),  # Dynamic path per category
-            search_key=search_key,                                          # Dynamic per task
-            settings_file_path=settings_file                               # Use the same settings file
+        # Use ScraperConfig's factory method to create properly configured instance
+        config = ScraperConfig.create_instance(
+            category_dir=category_name,
+            search_term=search_key,
+            number_of_images=num_images,
+            headless=headless
         )
         
-        print(f"[INFO] Worker starting for Category: '{category_name}', Search Key: '{search_key}', Output Path: '{config.image_path}'")
+        print(f"[INFO] Worker starting for Category: '{category_name}', Search Key: '{search_key}'")
         
-        # Ensure category directory exists
-        if not os.path.exists(config.image_path):
-            print(f"[INFO] Creating category directory: {config.image_path}")
-            os.makedirs(config.image_path, exist_ok=True)
-            
         image_scraper = GoogleImageScraper(config=config)
-        
         image_urls = image_scraper.fetch_image_urls()
+        
         if image_urls:
-            # Let ScraperConfig determine keep_filenames setting from settings.ini
             image_scraper.download_images(image_urls)
         else:
             print(f"[INFO] No image URLs found for '{search_key}' in category '{category_name}'. Skipping download.")
@@ -56,18 +50,19 @@ def load_categories_from_json(json_file_path):
 
 
 if __name__ == "__main__":
-    # Let ScraperConfig handle all configuration from settings.ini
-    config = ScraperConfig(
-        image_path="output",  # Temporary config just to read settings
-        search_key="temp",    # Temporary config just to read settings
-    )
+    # Configuration constants
+    NUM_WORKERS = 1
+    IMAGES_PER_SEARCH = 2
+    CATEGORIES_FILE = "categories.json"
+    HEADLESS_MODE = True
     
-    # Load categories from the path specified in settings.ini
-    categories_data = load_categories_from_json(os.path.join(os.getcwd(), "categories.json"))
+    # Load categories
+    categories_data = load_categories_from_json(CATEGORIES_FILE)
     if not categories_data:
         print("[FATAL] Could not load categories. Exiting.")
         exit(1)
     
+    # Prepare tasks
     tasks_to_run = []
     for category, search_terms in categories_data.items():
         if not isinstance(search_terms, list):
@@ -91,13 +86,15 @@ if __name__ == "__main__":
         print(f"[INFO] Creating base output directory: {base_output_dir}")
         os.makedirs(base_output_dir, exist_ok=True)
     
-    # Let ScraperConfig determine number of workers from settings.ini
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+    # Run tasks in parallel
+    with concurrent.futures.ThreadPoolExecutor(max_workers=NUM_WORKERS) as executor:
         futures = [
             executor.submit(
                 worker_thread,
                 task['category'],
-                task['search_key']
+                task['search_key'],
+                IMAGES_PER_SEARCH,
+                HEADLESS_MODE
             ) for task in tasks_to_run
         ]
         for future in concurrent.futures.as_completed(futures):
