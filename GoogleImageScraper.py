@@ -241,174 +241,105 @@ class GoogleImageScraper():
         print("[INFO] Google image URL gathering ended.")
         return image_urls
 
-    def save_images(self,image_urls, keep_filenames):
-        #save images into file directory
+    def save_images(self, image_urls, keep_filenames):
         """
-            This function takes in an array of image urls and save it into the given image path/directory.
-            It incorporates checkpointing to resume interrupted downloads and skips already downloaded files.
-            Example:
-                google_image_scraper = GoogleImageScraper("webdriver_path","image_path","search_key",number_of_photos)
-                image_urls=["https://example_1.jpg","https://example_2.jpg"]
-                google_image_scraper.save_images(image_urls)
-
+        Download and save images from the given URLs into self.image_path.
+        Supports checkpointing and skipping already downloaded files.
         """
         if not image_urls:
             print("[INFO] No image URLs provided to save.")
             return
 
         print(f"[INFO] Attempting to save {len(image_urls)} images for '{self.search_key}', please wait...")
-        
+
         start_index = 0
         download_checkpoint = load_json_data(self.download_checkpoint_file)
+        urls_hash = hash(tuple(image_urls))
+
         if download_checkpoint and \
-           download_checkpoint.get('search_key') == self.search_key and \
-           download_checkpoint.get('all_image_urls_hash') == hash(tuple(image_urls)): # Check if URL list is the same
-            
+        download_checkpoint.get('search_key') == self.search_key and \
+        download_checkpoint.get('all_image_urls_hash') == urls_hash:
             start_index = download_checkpoint.get('last_downloaded_index', -1) + 1
-            if start_index > 0:
-                print(f"[INFO] Resuming download for '{self.search_key}' from index {start_index} (out of {len(image_urls)}) based on checkpoint.")
-            else:
-                 print(f"[INFO] Checkpoint found for '{self.search_key}', starting download from beginning (index 0).")
+            print(f"[INFO] Resuming from index {start_index}.")
         else:
-            if download_checkpoint:
-                 print(f"[INFO] Download checkpoint found for '{self.search_key}' but image URL list differs or is missing hash. Starting fresh.")
-            else:
-                 print(f"[INFO] No valid download checkpoint found for '{self.search_key}'. Starting fresh.")
-            initial_checkpoint_data = {
+            save_json_data(self.download_checkpoint_file, {
                 'search_key': self.search_key,
-                'all_image_urls_hash': hash(tuple(image_urls)),
+                'all_image_urls_hash': urls_hash,
                 'last_downloaded_index': -1,
                 'total_urls_to_download': len(image_urls)
-            }
-            save_json_data(self.download_checkpoint_file, initial_checkpoint_data)
+            })
 
         saved_count = 0
         for indx in range(start_index, len(image_urls)):
             image_url = image_urls[indx]
             search_string_for_filename = ''.join(e for e in self.search_key if e.isalnum())
-            actual_image_path_to_save = ""
 
             try:
-                print(f"[INFO] Downloading image {indx+1}/{len(image_urls)}: {image_url}")
-                image_content_response = requests.get(image_url, timeout=10)
-                if image_content_response.status_code == 200:
-                    with Image.open(io.BytesIO(image_content_response.content)) as image_from_web:
-                        image_format = image_from_web.format.lower() if image_from_web.format else 'jpg'
+                print(f"[INFO] Downloading {indx+1}/{len(image_urls)}: {image_url}")
+                headers = {
+                    "User-Agent": (
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/122.0.0.0 Safari/537.36"
+                    ),
+                    "Referer": image_url
+                }
+                response = requests.get(image_url, headers=headers, timeout=10)
+                if response.status_code != 200:
+                    raise Exception(f"Status code: {response.status_code}")
 
-                        if keep_filenames:
-                            o = urlparse(image_url)
-                            base_name = os.path.basename(o.path)
-                            name_part, ext_part = os.path.splitext(base_name)
-                            filename = f"{name_part if name_part else search_string_for_filename + str(indx)}.{image_format}"
-                        else:
-                            filename = f"{search_string_for_filename}{str(indx)}.{image_format}"
-                        
-                        actual_image_path_to_save = os.path.join(self.image_path, filename)
+                with Image.open(io.BytesIO(response.content)) as img:
+                    image_format = img.format.lower() if img.format else 'jpg'
 
-                        if os.path.exists(actual_image_path_to_save):
-                            print(f"[INFO] Image {actual_image_path_to_save} already exists. Skipping download.")
-                            current_dl_checkpoint_data = {
-                                'search_key': self.search_key,
-                                'all_image_urls_hash': hash(tuple(image_urls)),
-                                'last_downloaded_index': indx,
-                                'total_urls_to_download': len(image_urls)
-                            }
-                            save_json_data(self.download_checkpoint_file, current_dl_checkpoint_data)
-                            saved_count +=1
-                            continue
+                    if keep_filenames:
+                        base_name = os.path.basename(urlparse(image_url).path)
+                        name_part, _ = os.path.splitext(base_name)
+                        filename = f"{name_part or search_string_for_filename + str(indx)}.{image_format}"
+                    else:
+                        filename = f"{search_string_for_filename}{indx}.{image_format}"
 
-                        image_resolution = image_from_web.size
-                        if image_resolution:
-                            if not (self.min_resolution[0] <= image_resolution[0] <= self.max_resolution[0] and \
-                                    self.min_resolution[1] <= image_resolution[1] <= self.max_resolution[1]):
-                                print(f"[INFO] Image {filename} resolution {image_resolution} out of range ({self.min_resolution}-{self.max_resolution}). Skipping save.")
-                                current_dl_checkpoint_data = {
-                                    'search_key': self.search_key,
-                                    'all_image_urls_hash': hash(tuple(image_urls)),
-                                    'last_downloaded_index': indx,
-                                    'total_urls_to_download': len(image_urls)
-                                }
-                                save_json_data(self.download_checkpoint_file, current_dl_checkpoint_data)
-                                continue
+                    save_path = os.path.join(self.image_path, filename)
 
-                        try:
-                            image_from_web.save(actual_image_path_to_save)
-                            print(f"[INFO] {self.search_key} \t Image {indx+1}/{len(image_urls)} saved at: {actual_image_path_to_save}")
-                            saved_count += 1
-                        except OSError as e_save:
-                            print(f"[WARN] OSError saving {actual_image_path_to_save}. Attempting to convert to RGB. Error: {e_save}")
-                            try:
-                                rgb_im = image_from_web.convert('RGB')
-                                fn, _ = os.path.splitext(actual_image_path_to_save)
-                                rgb_save_path = f"{fn}.jpg"
-                                if actual_image_path_to_save.lower() == rgb_save_path.lower() and image_format != 'jpeg' and image_format != 'jpg':
-                                    pass
-
-                                rgb_im.save(rgb_save_path)
-                                print(f"[INFO] {self.search_key} \t Image {indx+1}/{len(image_urls)} (converted to RGB) saved at: {rgb_save_path}")
-                                saved_count += 1
-                            except Exception as e_convert_save:
-                                print(f"[ERROR] Failed to convert and save {actual_image_path_to_save} as RGB: {e_convert_save}")
-                        
-                        current_dl_checkpoint_data = {
+                    if os.path.exists(save_path):
+                        print(f"[INFO] File exists, skipping: {save_path}")
+                        save_json_data(self.download_checkpoint_file, {
                             'search_key': self.search_key,
-                            'all_image_urls_hash': hash(tuple(image_urls)),
+                            'all_image_urls_hash': urls_hash,
                             'last_downloaded_index': indx,
                             'total_urls_to_download': len(image_urls)
-                        }
-                        save_json_data(self.download_checkpoint_file, current_dl_checkpoint_data)
+                        })
+                        saved_count += 1
+                        continue
 
-                else:
-                    print(f"[ERROR] Failed to download image {image_url}. Status code: {image_content_response.status_code}")
-                    current_dl_checkpoint_data = {
-                        'search_key': self.search_key,
-                        'all_image_urls_hash': hash(tuple(image_urls)),
-                        'last_downloaded_index': indx,
-                        'total_urls_to_download': len(image_urls)
-                    }
-                    save_json_data(self.download_checkpoint_file, current_dl_checkpoint_data)
+                    img.save(save_path)
+                    print(f"[INFO] Saved: {save_path}")
+                    saved_count += 1
 
-            except requests.exceptions.RequestException as e_req:
-                print(f"[ERROR] Download failed for {image_url} (RequestException): {e_req}")
-                current_dl_checkpoint_data = {
+                save_json_data(self.download_checkpoint_file, {
                     'search_key': self.search_key,
-                    'all_image_urls_hash': hash(tuple(image_urls)),
+                    'all_image_urls_hash': urls_hash,
                     'last_downloaded_index': indx,
                     'total_urls_to_download': len(image_urls)
-                }
-                save_json_data(self.download_checkpoint_file, current_dl_checkpoint_data)
+                })
+
             except Exception as e:
-                print(f"[ERROR] An unexpected error occurred while processing {image_url}: {e}")
-                current_dl_checkpoint_data = {
+                print(f"[ERROR] Failed to save image {indx+1}: {e}")
+                save_json_data(self.download_checkpoint_file, {
                     'search_key': self.search_key,
-                    'all_image_urls_hash': hash(tuple(image_urls)),
+                    'all_image_urls_hash': urls_hash,
                     'last_downloaded_index': indx,
                     'total_urls_to_download': len(image_urls)
-                }
-                save_json_data(self.download_checkpoint_file, current_dl_checkpoint_data)
+                })
 
         print("--------------------------------------------------")
-        if saved_count > 0:
-            print(f"[INFO] {saved_count} new images downloaded for '{self.search_key}'.")
-        else:
-            print(f"[INFO] No new images were downloaded for '{self.search_key}' in this session.")
-        
-        all_processed = False
-        final_checkpoint = load_json_data(self.download_checkpoint_file)
-        if final_checkpoint and final_checkpoint.get('last_downloaded_index', -1) == len(image_urls) - 1:
-            all_processed = True
-        
-        if not image_urls and not os.path.exists(self.download_checkpoint_file):
-            pass
-        elif all_processed :
-            remove_file_if_exists(self.download_checkpoint_file)
-            print(f"[INFO] All image downloads processed for '{self.search_key}'. Download checkpoint cleared.")
-        else:
-            if image_urls:
-                 print(f"[INFO] Download process for '{self.search_key}' potentially incomplete or interrupted. Checkpoint retained.")
-            elif os.path.exists(self.download_checkpoint_file):
-                 remove_file_if_exists(self.download_checkpoint_file)
-                 print(f"[INFO] No image URLs provided. Old download checkpoint for '{self.search_key}' cleared.")
+        print(f"[INFO] Downloaded {saved_count} new image(s).")
 
-
-        print("[INFO] Image saving process completed. Please note that some photos may not have been downloaded due to errors, format issues, or resolution constraints.")
+        if saved_count and os.path.exists(self.download_checkpoint_file):
+            final_checkpoint = load_json_data(self.download_checkpoint_file)
+            if final_checkpoint.get('last_downloaded_index', -1) == len(image_urls) - 1:
+                remove_file_if_exists(self.download_checkpoint_file)
+                print(f"[INFO] All downloads completed. Checkpoint cleared.")
+            else:
+                print(f"[INFO] Download incomplete. Checkpoint retained.")
+        elif not saved_count:
+            print(f"[INFO] No new images were downloaded.")
