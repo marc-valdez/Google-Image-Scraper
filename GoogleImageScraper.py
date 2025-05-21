@@ -26,12 +26,13 @@ from cache_utils import ensure_cache_dir, load_json_data, save_json_data, remove
 import patch
 
 class GoogleImageScraper():
-    def __init__(self, webdriver_path, image_path, search_key="cat", number_of_images=1, headless=True, min_resolution=(0, 0), max_resolution=(1920, 1080), max_missed=10):
+    def __init__(self, webdriver_path, image_path, search_key="cat", advanced_suffix="", number_of_images=1, headless=True, min_resolution=(0, 0), max_resolution=(1920, 1080), max_missed=10):
         #check parameter types
         if (type(number_of_images)!=int):
             print("[Error] Number of images must be integer value.")
             return
-        self.search_key = search_key
+        self.filename = search_key
+        self.search_key = f"{search_key}{advanced_suffix}"
         self.number_of_images = number_of_images
         self.webdriver_path = webdriver_path
         self.image_path = image_path
@@ -272,7 +273,7 @@ class GoogleImageScraper():
         saved_count = 0
         for indx in range(start_index, len(image_urls)):
             image_url = image_urls[indx]
-            search_string_for_filename = ''.join(e for e in self.search_key if e.isalnum())
+            search_string_for_filename = ''.join(e for e in self.filename if e.isalnum())
 
             try:
                 print(f"[INFO] Downloading {indx+1}/{len(image_urls)}: {image_url}")
@@ -296,7 +297,7 @@ class GoogleImageScraper():
                         name_part, _ = os.path.splitext(base_name)
                         filename = f"{name_part or search_string_for_filename + str(indx)}.{image_format}"
                     else:
-                        filename = f"{search_string_for_filename}{indx}.{image_format}"
+                        filename = f"{search_string_for_filename}_{indx}.{image_format}"
 
                     save_path = os.path.join(self.image_path, filename)
 
