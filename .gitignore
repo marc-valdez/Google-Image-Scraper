@@ -12,3 +12,4 @@ photos
 webdriver/chromedriver.exe
 webdriver/LICENSE.chromedriver
 webdriver/THIRD_PARTY_NOTICES.chromedriver
+/output
