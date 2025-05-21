@@ -117,42 +117,49 @@ class GoogleImageScraper():
         """
         print("[INFO] Attempting to gather image links...")
 
-        # 1. Try to load from URL cache first
+        # Initialize state variables
+        image_urls = [] # Holds unique URLs found
+        count = 0 # Number of unique URLs found matching self.number_of_images target
+        current_selenium_item_index = 1 # 1-based index for the XPATH
+        missed_count = 0
+
+        # 1. Try to load from URL cache first (_urls.json)
         cached_urls_data = load_json_data(self.url_cache_file)
         if cached_urls_data and cached_urls_data.get('search_key') == self.search_key:
-            cached_urls = cached_urls_data.get('urls', [])
-            if len(cached_urls) >= self.number_of_images:
-                print(f"[INFO] Loaded {self.number_of_images} image URLs from cache for '{self.search_key}'.")
-                # self.driver might not be initialized if we hit cache directly.
-                # Ensure driver is quit if it was initialized in __init__ but not used.
+            loaded_cached_urls = cached_urls_data.get('urls', [])
+            # Add only unique URLs from cache to our current list
+            for url in loaded_cached_urls:
+                if url not in image_urls:
+                    image_urls.append(url)
+            count = len(image_urls)
+            
+            if count >= self.number_of_images:
+                print(f"[INFO] Loaded {self.number_of_images} (or more) unique image URLs from cache for '{self.search_key}'.")
                 if hasattr(self, 'driver') and self.driver:
-                    try:
-                        self.driver.quit()
-                        print("[INFO] WebDriver quit as URLs were fully loaded from cache.")
-                    except Exception as e:
-                        print(f"[WARN] Error quitting WebDriver when loading from cache: {e}")
-                return cached_urls[:self.number_of_images]
-            else:
-                print(f"[INFO] Cache found for '{self.search_key}' but only {len(cached_urls)} URLs. Need {self.number_of_images}. Will try to fetch more.")
-        
-        # Initialize default values
-        image_urls = []
-        count = 0
-        missed_count = 0
-        indx_1 = 0
-        indx_2 = 0
+                    try: self.driver.quit()
+                    except Exception as e: print(f"[WARN] Error quitting WebDriver (cache hit): {e}")
+                return image_urls[:self.number_of_images]
+            else: # Need to fetch more
+                print(f"[INFO] Cache for '{self.search_key}' has {count} unique URLs. Need {self.number_of_images}. Will try to fetch {self.number_of_images - count} more.")
+                # Start Selenium iteration from where the cache last left off
+                current_selenium_item_index = cached_urls_data.get('final_selenium_item_index', 0) + 1
+                print(f"[INFO] Resuming Selenium iteration from item index {current_selenium_item_index} based on cache state.")
 
-        # 2. Try to load from URL fetching checkpoint
+        # 2. Try to load from URL fetching checkpoint (_url_checkpoint.json)
+        # This overrides if an active scraping session was interrupted.
         checkpoint_data = load_json_data(self.url_checkpoint_file)
         if checkpoint_data and checkpoint_data.get('search_key') == self.search_key:
-            print(f"[INFO] Resuming URL fetching for '{self.search_key}' from checkpoint.")
-            image_urls = checkpoint_data.get('image_urls_found', [])
-            count = checkpoint_data.get('count', 0)
-            indx_1 = checkpoint_data.get('last_indx_1', 0)
-            indx_2 = checkpoint_data.get('last_indx_2', 0)
+            print(f"[INFO] Resuming URL fetching for '{self.search_key}' from active checkpoint.")
+            # Checkpoint URLs are the source of truth for an interrupted session
+            image_urls = checkpoint_data.get('image_urls_found', []) # Use checkpoint's list directly
+            count = len(image_urls) # Count is based on this list
+            current_selenium_item_index = checkpoint_data.get('last_selenium_item_index', current_selenium_item_index) # Use checkpoint's index
             missed_count = checkpoint_data.get('missed_count', 0)
-            print(f"[INFO] Resuming from: count={count}, indx_1={indx_1}, indx_2={indx_2}, missed_count={missed_count}")
-        
+            print(f"[INFO] Checkpoint state: {count} URLs found, next Selenium item index {current_selenium_item_index}, missed_count={missed_count}.")
+        else:
+            # No valid checkpoint, or starting fresh after cache check
+            missed_count = 0 # Ensure missed_count is 0 if not resuming from checkpoint
+
         if not hasattr(self, 'driver'):
              # This case should ideally not happen if __init__ completes.
              # Re-evaluating __init__ structure for driver initialization.
@@ -161,103 +168,117 @@ class GoogleImageScraper():
             return []
 
 
-        print("[INFO] Gathering image links online...")
-        self.driver.get(self.url) # Ensure driver navigates if not loaded from full cache
+        print("[INFO] Gathering image links online (if needed)...")
+        # Only get URL if we are actually going to scrape
+        if count < self.number_of_images:
+            self.driver.get(self.url)
+            time.sleep(3) # Initial wait for page load
         
-        search_string = '//*[@id="rso"]/div/div/div[1]/div/div/div[%s]/div[2]/h3/a/div/div/div/g-img' # This XPATH might be fragile
-        time.sleep(3) # Initial wait for page load
+        search_string = '//*[@id="rso"]/div/div/div[1]/div/div/div[%s]/div[2]/h3/a/div/div/div/g-img' # User's XPATH with one placeholder
 
-        while self.number_of_images > count and missed_count < self.max_missed:
-            if indx_2 > 0:
-                try:
-                    imgurl = self.driver.find_element(By.XPATH, search_string%(indx_1,indx_2+1))
-                    imgurl.click()
-                    indx_2 = indx_2 + 1
-                    missed_count = 0
-                except Exception:
-                    try:
-                        imgurl = self.driver.find_element(By.XPATH, search_string%(indx_1+1,1))
-                        imgurl.click()
-                        indx_2 = 1
-                        indx_1 = indx_1 + 1
-                    except:
-                        indx_2 = indx_2 + 1
-                        missed_count = missed_count + 1
-            else:
-                try:
-                    imgurl = self.driver.find_element(By.XPATH, search_string%(indx_1+1))
-                    imgurl.click()
-                    missed_count = 0
-                    indx_1 = indx_1 + 1    
-                except Exception:
-                    try:
-                        imgurl = self.driver.find_element(By.XPATH, search_string%(indx_1,indx_2+1))
-                        imgurl.click()
-                        missed_count = 0
-                        indx_2 = indx_2 + 1
-                    except Exception:
-                        indx_1 = indx_1 + 1
-                        missed_count = missed_count + 1
+        while count < self.number_of_images and missed_count < self.max_missed:
+            try:
+                # Attempt to find and click the image thumbnail
+                # print(f"[DEBUG] Trying to find element with index: {current_selenium_item_index}")
+                imgurl_element = self.driver.find_element(By.XPATH, search_string % current_selenium_item_index)
+                imgurl_element.click()
+                missed_count = 0 # Reset missed_count if click is successful
+                # print(f"[DEBUG] Clicked element with index: {current_selenium_item_index}")
+                
+                # Try to extract the actual image URL from the popup/details view
+                time.sleep(1) # Wait for popup
+                class_names = ["n3VNCb","iPVvYb","r48jcc","pT0Scc","H8Rx8c"] # Original class names
+                found_src_in_popup = False
+                for _image_detail_element in [self.driver.find_elements(By.CLASS_NAME, class_name) for class_name in class_names if len(self.driver.find_elements(By.CLASS_NAME, class_name)) != 0 ][0]:
+                    src_link = _image_detail_element.get_attribute("src")
+                    if src_link and ("http" in src_link) and ("encrypted" not in src_link):
+                        if src_link not in image_urls:
+                            image_urls.append(src_link)
+                            count = len(image_urls) # Update count of unique URLs
+                            print(f"[INFO] {self.search_key} \t #{count} (Selenium Idx: {current_selenium_item_index}) \t {src_link}")
+                            
+                            if count % 5 == 0: # Save checkpoint periodically
+                                checkpoint_to_save = {
+                                    'search_key': self.search_key,
+                                    'last_selenium_item_index': current_selenium_item_index,
+                                    'count': count,
+                                    'missed_count': missed_count,
+                                    'image_urls_found': image_urls
+                                }
+                                if save_json_data(self.url_checkpoint_file, checkpoint_to_save):
+                                    print(f"[INFO] URL fetching checkpoint saved. Total URLs: {count}, at Selenium Idx: {current_selenium_item_index}.")
+                                else:
+                                    print(f"[WARN] Failed to save URL fetching checkpoint.")
+                        else:
+                            # print(f"[DEBUG] URL already found, skipping: {src_link}")
+                            pass # Already have this URL
+                        found_src_in_popup = True
+                        break # Found a valid src_link for this clicked thumbnail
+                
+                if not found_src_in_popup:
+                    # print(f"[DEBUG] Clicked thumbnail (idx {current_selenium_item_index}), but no valid src link found in popup.")
+                    # This situation might not increment missed_count if the click itself was successful
+                    # but it didn't lead to a new URL. The outer loop for `count` handles progress.
+                    pass
+
+            except NoSuchElementException:
+                # print(f"[DEBUG] Element not found for index {current_selenium_item_index}.")
+                missed_count += 1
+            except Exception as e:
+                # print(f"[DEBUG] Other exception for index {current_selenium_item_index}: {e}")
+                missed_count += 1
+                # Consider if current_selenium_item_index should always increment or only on NoSuchElementException
+                # If an image is clicked but popup fails, we might be stuck.
+                # For now, any failure in the try block increments missed_count.
+
+            # Increment to try the next item in the grid/list on the search results page
+            current_selenium_item_index += 1
                     
-            try:
-                #select image from the popup
-                time.sleep(1)
-                class_names = ["n3VNCb","iPVvYb","r48jcc","pT0Scc","H8Rx8c"]
-                images = [self.driver.find_elements(By.CLASS_NAME, class_name) for class_name in class_names if len(self.driver.find_elements(By.CLASS_NAME, class_name)) != 0 ][0]
-                for image in images:
-                    #only download images that starts with http
-                    src_link = image.get_attribute("src")
-                    if(("http" in src_link) and (not "encrypted" in src_link)):
-                        print(
-                            f"[INFO] {self.search_key} \t #{count} \t {src_link}")
-                        image_urls.append(src_link)
-                        count += 1
-                        # Save checkpoint periodically
-                        if count % 5 == 0: # Save checkpoint every 5 images found
-                            current_checkpoint_data = {
-                                'search_key': self.search_key,
-                                'last_indx_1': indx_1,
-                                'last_indx_2': indx_2,
-                                'count': count,
-                                'missed_count': missed_count,
-                                'image_urls_found': image_urls
-                            }
-                            if save_json_data(self.url_checkpoint_file, current_checkpoint_data):
-                                print(f"[INFO] URL fetching checkpoint saved at image #{count} for '{self.search_key}'.")
-                            else:
-                                print(f"[WARN] Failed to save URL fetching checkpoint at image #{count}.")
-                        break # Found a valid src_link for this image element
-            except Exception:
-                print("[INFO] Unable to get link")
+            # Logic for scrolling and clicking "load next page" (mye4qd)
+            # This should happen periodically, not necessarily tied to finding a new image,
+            # but rather to expose more thumbnails if the bottom of the page is reached.
+            if count < self.number_of_images: # Only attempt to load more if we still need images
+                if missed_count > 5 or (current_selenium_item_index % 15 == 0): # Try to load more if stuck or after many items
+                    try:
+                        # Scroll first to make "load more" button visible if it's at the bottom
+                        self.driver.execute_script(f"window.scrollTo(0, document.body.scrollHeight);")
+                        time.sleep(0.5)
+                        load_more_button = self.driver.find_element(By.CLASS_NAME, "mye4qd") # Original class for "load more"
+                        if load_more_button.is_displayed() and load_more_button.is_enabled():
+                            print("[INFO] Clicking 'Load more results' button.")
+                            load_more_button.click()
+                            time.sleep(3) # Wait for new images to load
+                        else:
+                            # print("[DEBUG] 'Load more results' button not clickable or not found.")
+                            pass
+                    except Exception as e_load_more:
+                        # print(f"[DEBUG] Could not click 'Load more results' or no such button: {e_load_more}")
+                        pass
+                
+                # Simple scroll to try and trigger lazy loading, less aggressive than "load more"
+                if current_selenium_item_index % 5 == 0 : # Periodically scroll
+                     self.driver.execute_script(f"window.scrollBy(0, 500);") # Scroll down a bit
+                     time.sleep(0.5)
 
-            try:
-                #scroll page to load next image
-                if(count%3==0):
-                    self.driver.execute_script("window.scrollTo(0, "+str(indx_1*60)+");")
-                element = self.driver.find_element(By.CLASS_NAME,"mye4qd")
-                element.click()
-                print("[INFO] Loading next page")
-                time.sleep(3)
-            except Exception:
-                time.sleep(1)
-
-
+        # End of the while loop for scraping
+        # This block should be at the same indentation level as the `while` statement.
 
         # After the loop
-        print(f"[INFO] Total image URLs fetched for '{self.search_key}': {len(image_urls)}")
+        print(f"[INFO] Total unique image URLs gathered for '{self.search_key}': {len(image_urls)}")
         
         # Save all fetched URLs to cache
-        if image_urls: # Only save if some URLs were found
-            print(f"[INFO] Saving all {len(image_urls)} fetched image URLs to cache for '{self.search_key}'.")
+        if image_urls:
+            print(f"[INFO] Saving all {len(image_urls)} unique image URLs to cache for '{self.search_key}'.")
             url_cache_data = {
                 'search_key': self.search_key,
-                'number_of_images_requested': self.number_of_images, # Store what was requested
-                'urls_found_count': len(image_urls),
-                'urls': image_urls
+                'number_of_images_requested': self.number_of_images,
+                'urls_found_count': len(image_urls), # Actual number of unique URLs found
+                'urls': image_urls,
+                'final_selenium_item_index': current_selenium_item_index -1 # Save the last index successfully processed or attempted
             }
             save_json_data(self.url_cache_file, url_cache_data)
         
-        # Remove URL fetching checkpoint as the process is complete for this run
+        # Remove URL fetching checkpoint as the process (initial or "fetch more") is complete for this run
         remove_file_if_exists(self.url_checkpoint_file)
         print(f"[INFO] URL fetching checkpoint cleared for '{self.search_key}'.")
 
