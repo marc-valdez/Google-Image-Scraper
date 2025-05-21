@@ -1,7 +1,19 @@
 from selenium.webdriver.common.by import By
-from selenium.common.exceptions import NoSuchElementException
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import (
+    NoSuchElementException, StaleElementReferenceException,
+    TimeoutException, WebDriverException
+)
 from cache_utils import load_json_data, save_json_data, remove_file_if_exists
 import time
+import random
+
+def exponential_backoff(attempt, base_delay=1, max_delay=60):
+    """Calculate delay with jitter for exponential backoff"""
+    delay = min(base_delay * (2 ** attempt), max_delay)
+    jitter = random.uniform(0, 0.1 * delay)
+    return delay + jitter
 
 class UrlFetcher:
     def __init__(self, config, webdriver_manager):
@@ -67,20 +79,48 @@ class UrlFetcher:
         else:
             missed_count = 0
 
+        # Define search string pattern first
+        search_string = '//*[@id="rso"]/div/div/div[1]/div/div/div[%s]/div[2]/h3/a/div/div/div/g-img'
+        
         if count < self.number_of_images:
             print(f"[INFO] Gathering remaining image links online for '{self.search_key}'...")
             self.driver.get(self.google_search_url)
-            time.sleep(3)
-        
-        search_string = '//*[@id="rso"]/div/div/div[1]/div/div/div[%s]/div[2]/h3/a/div/div/div/g-img'
+            
+            # Wait for initial page load with dynamic timeout
+            try:
+                WebDriverWait(self.driver, 10).until(
+                    EC.presence_of_element_located((By.XPATH, search_string % 1))
+                )
+            except TimeoutException:
+                print("[WARN] Initial page load timeout - refreshing page...")
+                self.driver.refresh()
+                time.sleep(5)
 
+        attempt = 0
+        page_refresh_counter = 0
         while count < self.number_of_images and missed_count < self.config.max_missed:
             try:
-                imgurl_element = self.driver.find_element(By.XPATH, search_string % current_selenium_item_index)
-                imgurl_element.click()
-                missed_count = 0
-                
-                time.sleep(1)
+                # Periodic page refresh to prevent stale state
+                if page_refresh_counter >= 50:
+                    print("[INFO] Performing periodic page refresh...")
+                    self.driver.refresh()
+                    time.sleep(3)
+                    page_refresh_counter = 0
+                    continue
+
+                # Try to find and click image with wait
+                try:
+                    imgurl_element = WebDriverWait(self.driver, 5).until(
+                        EC.element_to_be_clickable((By.XPATH, search_string % current_selenium_item_index))
+                    )
+                    imgurl_element.click()
+                    missed_count = 0
+                    attempt = 0
+                except TimeoutException:
+                    raise NoSuchElementException("Element not found or not clickable")
+
+                # Dynamic wait after click
+                time.sleep(random.uniform(1.0, 2.0))
                 class_names = ["n3VNCb","iPVvYb","r48jcc","pT0Scc","H8Rx8c"]
                 found_src_in_popup = False
                 
@@ -113,16 +153,39 @@ class UrlFetcher:
 
             except NoSuchElementException:
                 missed_count += 1
-            except Exception as e:
+            except StaleElementReferenceException:
+                print("[WARN] Encountered stale element - retrying...")
+                attempt += 1
+                time.sleep(exponential_backoff(attempt))
+                continue
+            except WebDriverException as e:
+                print(f"[WARN] WebDriver error: {str(e)}")
                 missed_count += 1
+                attempt += 1
+                time.sleep(exponential_backoff(attempt))
+            except Exception as e:
+                print(f"[ERROR] Unexpected error: {str(e)}")
+                missed_count += 1
+                attempt += 1
+                time.sleep(exponential_backoff(attempt))
 
             current_selenium_item_index += 1
+            page_refresh_counter += 1
                     
             if count < self.number_of_images:
                 if missed_count > 5 or (current_selenium_item_index % 15 == 0):
                     try:
+                        # Smooth scroll with intermediate stops
+                        height = self.driver.execute_script("return document.body.scrollHeight")
+                        current_pos = self.driver.execute_script("return window.pageYOffset")
+                        scroll_step = height // 4
+                        
+                        for pos in range(current_pos, height, scroll_step):
+                            self.driver.execute_script(f"window.scrollTo(0, {pos});")
+                            time.sleep(0.2)
+                        
                         self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-                        time.sleep(0.5)
+                        time.sleep(random.uniform(0.5, 1.0))
                         load_more_button_selectors = [
                             (By.CLASS_NAME, "mye4qd"),
                             (By.XPATH, "//input[@value='Show more results']"),
@@ -144,9 +207,13 @@ class UrlFetcher:
                     except Exception as e_load_more:
                         pass
 
-                if current_selenium_item_index % 5 == 0 :
-                     self.driver.execute_script("window.scrollBy(0, 500);")
-                     time.sleep(0.5)
+                if current_selenium_item_index % 5 == 0:
+                    # Randomized scroll amount
+                    scroll_amount = random.randint(400, 600)
+                    self.driver.execute_script(f"window.scrollBy(0, {scroll_amount});")
+                    time.sleep(random.uniform(0.3, 0.7))
+                    
+                page_refresh_counter += 1
 
         print(f"[INFO] Total unique image URLs gathered for '{self.search_key}': {len(image_urls)}")
         

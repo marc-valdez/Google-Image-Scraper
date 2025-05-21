@@ -26,17 +26,28 @@ class ScraperConfig:
 
         return default_path
 
-    def __init__(self, 
+    def __init__(self,
                  image_path,           # Required: Output path for images
                  search_key,           # Required: Search term
                  number_of_images=10,  # Optional parameters with defaults
                  headless=True,
-                 max_missed=10,
+                 max_missed=25,        # Increased for better resilience
                  webdriver_path=None,
                  chrome_binary_path=None,
                  advanced_suffix='',
-                 keep_filenames=False):
-        """Initialize scraper configuration with sensible defaults."""
+                 keep_filenames=False,
+                 # Network and rate limiting parameters
+                 request_interval=1.0,  # Minimum seconds between requests
+                 max_retries=5,        # Maximum number of retries per request
+                 retry_backoff=0.5,    # Base delay for exponential backoff
+                 max_retry_delay=60,   # Maximum retry delay in seconds
+                 connection_timeout=15, # Connection timeout in seconds
+                 # Browser parameters
+                 page_load_timeout=30,  # Page load timeout in seconds
+                 browser_refresh_interval=50,  # Refresh browser every N operations
+                 scroll_pause_time=0.5, # Pause between scroll operations
+                 load_button_wait=3.0): # Wait after clicking load more
+        """Initialize scraper configuration with sensible defaults for long-running operations."""
         
         # Required parameters
         self.image_path = image_path
@@ -53,6 +64,19 @@ class ScraperConfig:
         self.max_missed = max_missed
         self.advanced_suffix = advanced_suffix
         self.keep_filenames = keep_filenames
+        
+        # Network and rate limiting settings
+        self.request_interval = request_interval
+        self.max_retries = max_retries
+        self.retry_backoff = retry_backoff
+        self.max_retry_delay = max_retry_delay
+        self.connection_timeout = connection_timeout
+        
+        # Browser behavior settings
+        self.page_load_timeout = page_load_timeout
+        self.browser_refresh_interval = browser_refresh_interval
+        self.scroll_pause_time = scroll_pause_time
+        self.load_button_wait = load_button_wait
         
         # Webdriver setup
         self.webdriver_path = self._setup_webdriver_path(webdriver_path)

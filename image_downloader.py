@@ -1,16 +1,66 @@
 import os
-import requests
 import io
+import time
+import hashlib
 from PIL import Image
 from urllib.parse import urlparse
+from requests.adapters import HTTPAdapter
+from requests.packages.urllib3.util.retry import Retry
+import requests
 from cache_utils import load_json_data, save_json_data, remove_file_if_exists
+
+class RateLimiter:
+    def __init__(self, min_interval=1.0):
+        self.min_interval = min_interval
+        self.last_call = 0
+
+    def wait(self):
+        now = time.time()
+        elapsed = now - self.last_call
+        if elapsed < self.min_interval:
+            time.sleep(self.min_interval - elapsed)
+        self.last_call = time.time()
+
+def verify_image_file(file_path, original_content):
+    """Verify downloaded image file integrity"""
+    try:
+        with open(file_path, 'rb') as f:
+            saved_content = f.read()
+        return hashlib.md5(saved_content).hexdigest() == hashlib.md5(original_content).hexdigest()
+    except Exception:
+        return False
 
 class ImageDownloader:
     def __init__(self, config):
         self.config = config
-
+        self.rate_limiter = RateLimiter(min_interval=1.0)  # 1 second between requests
+        self.session = self._create_session()
+        
         if not os.path.exists(self.config.image_path):
             os.makedirs(self.config.image_path)
+            
+    def _create_session(self):
+        """Create a requests session with retries and pooling"""
+        session = requests.Session()
+        
+        # Configure retry strategy
+        retries = Retry(
+            total=5,  # Total number of retries
+            backoff_factor=0.5,  # Wait 0.5, 1, 2, 4... seconds between retries
+            status_forcelist=[408, 429, 500, 502, 503, 504],  # Retry on these status codes
+            allowed_methods=["GET"]
+        )
+        
+        # Configure connection pooling
+        adapter = HTTPAdapter(
+            max_retries=retries,
+            pool_connections=10,
+            pool_maxsize=50
+        )
+        
+        session.mount('http://', adapter)
+        session.mount('https://', adapter)
+        return session
 
     @property
     def download_checkpoint_file(self):
@@ -57,6 +107,8 @@ class ImageDownloader:
 
 
             try:
+                self.rate_limiter.wait()  # Rate limit requests
+                
                 print(f"[INFO] Downloading {indx+1}/{len(image_urls)} for '{effective_search_key}': {image_url}")
                 headers = {
                     "User-Agent": (
@@ -66,7 +118,9 @@ class ImageDownloader:
                     ),
                     "Referer": image_url
                 }
-                response = requests.get(image_url, headers=headers, timeout=10)
+                
+                # Use session for connection pooling and automatic retries
+                response = self.session.get(image_url, headers=headers, timeout=15)
                 if response.status_code != 200:
                     raise Exception(f"HTTP Status code: {response.status_code}")
 
@@ -107,9 +161,15 @@ class ImageDownloader:
                     })
                     continue
 
+                # Write content and verify integrity
                 with open(save_path, 'wb') as f:
                     f.write(response.content)
-                print(f"[INFO] Saved: {save_path}")
+                
+                if not verify_image_file(save_path, response.content):
+                    os.remove(save_path)
+                    raise Exception("File integrity check failed")
+                
+                print(f"[INFO] Saved and verified: {save_path}")
                 saved_count_this_session += 1
 
                 current_total_saved = downloaded_previously_count + saved_count_this_session
@@ -121,8 +181,12 @@ class ImageDownloader:
                     'saved_count_so_far': current_total_saved
                 })
 
+            except requests.exceptions.RequestException as e:
+                print(f"[ERROR] Network error downloading image {indx+1} ({image_url}): {e}")
+            except Image.UnidentifiedImageError:
+                print(f"[ERROR] Invalid or corrupt image data {indx+1} ({image_url})")
             except Exception as e:
-                print(f"[ERROR] Failed to save image {indx+1} ({image_url}): {e}")
+                print(f"[ERROR] Unexpected error saving image {indx+1} ({image_url}): {e}")
                 current_total_saved = downloaded_previously_count + saved_count_this_session
                 save_json_data(self.download_checkpoint_file, {
                     'search_key_ref': effective_search_key,
