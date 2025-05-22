@@ -18,10 +18,10 @@ def exponential_backoff(attempt, base=1, max_d=None):
     return min(base * (2 ** attempt), max_delay) + random.uniform(0, 0.1)
 
 class UrlFetcher:
-    def __init__(self, category_dir: str, class_name: str, worker_id: int):
+    def __init__(self, category_dir: str, class_name: str, worker_id: int, driver_instance=None):
         self.worker_id = worker_id
         
-        self.driver_manager = WebDriverManager()
+        self.driver_manager = WebDriverManager(existing_driver=driver_instance)
         self.driver = self.driver_manager.driver
         
         self.query = class_name
@@ -67,10 +67,12 @@ class UrlFetcher:
             logger.info(f"[Worker {self.worker_id}] Found {len(found_urls)} cached URLs. Need {self.target_images - len(found_urls)} more.")
 
         if not self.driver:
-            logger.error(f"[Worker {self.worker_id}] WebDriver not initialized.")
+            logger.error(f"[Worker {self.worker_id}] WebDriver not initialized for UrlFetcher.")
             return found_urls
 
         try:
+            # Instead of self.driver.get, we might need to open a new tab if reusing a driver
+            # For now, let's assume each task gets a fresh navigation on the shared driver
             self.driver.get(self.search_url)
             WebDriverWait(self.driver, cfg.PAGE_LOAD_TIMEOUT).until(
                 EC.presence_of_element_located((By.TAG_NAME, "img"))
@@ -82,13 +84,13 @@ class UrlFetcher:
             logger.error(f"[Worker {self.worker_id}] WebDriver error on initial page load: {e}. URL: {self.search_url}")
             return found_urls
 
-        needed_urls = self.target_images - len(found_urls) # Keep this for logging if needed, but progress bar uses target_images
-        if needed_urls <= 0 and len(found_urls) >= self.target_images : # Check if we already have enough from cache
+        needed_urls = self.target_images - len(found_urls) 
+        if needed_urls <= 0 and len(found_urls) >= self.target_images : 
              logger.info(f"[Worker {self.worker_id}] All {self.target_images} required images already found in cache.")
              return found_urls[:self.target_images]
 
         logger.start_progress(self.target_images, f"Finding images for '{self.query}'", self.worker_id)
-        if len(found_urls) > 0: # If we loaded some URLs from cache, update the progress bar
+        if len(found_urls) > 0: 
             logger.update_progress(advance=len(found_urls), worker_id=self.worker_id)
         
         high_res_image_selectors = ["n3VNCb", "iPVvYb", "r48jcc", "pT0Scc", "H8Rx8c"]
@@ -150,7 +152,7 @@ class UrlFetcher:
                 except WebDriverException:
                     self.driver.execute_script("arguments[0].click();", img_thumbnail_element)
                 
-                time.sleep(random.uniform(1.0, 2.0))
+                time.sleep(random.uniform(1.0, 2.0)) # Wait for high-res image to load
 
                 image_found_this_iteration = False
                 for cls in high_res_image_selectors:
@@ -159,7 +161,7 @@ class UrlFetcher:
                         if src and "http" in src and "encrypted" not in src and src not in found_urls:
                             found_urls.append(src)
                             logger.info(f"[Worker {self.worker_id}] Image {len(found_urls)}/{self.target_images}: {logger.truncate_url(src)}")
-                            logger.update_progress(worker_id=self.worker_id) # Advances by 1 by default
+                            logger.update_progress(worker_id=self.worker_id) 
                             
                             save_json_data(self.cache_file_path, {
                                 'search_url_used': self.search_url, 
@@ -167,7 +169,7 @@ class UrlFetcher:
                                 'number_of_images_requested': self.target_images,
                                 'urls_found_count': len(found_urls),
                                 'urls': found_urls,
-                                'processed_thumbnails_count': processed_thumbnails
+                                'processed_thumbnails_count': processed_thumbnails # Save current progress
                             })
                             image_found_this_iteration = True
                             if len(found_urls) >= self.target_images: break
@@ -177,14 +179,14 @@ class UrlFetcher:
                     consecutive_misses = 0
                 processed_thumbnails += 1
 
-                if processed_thumbnails % 5 == 0:
+                if processed_thumbnails % 5 == 0: # Scroll periodically
                     self.driver.execute_script(f"window.scrollBy(0, {random.randint(400, 600)});")
                     time.sleep(random.uniform(0.3, 0.7))
                 
             except TimeoutException: 
                 logger.warning(f"[Worker {self.worker_id}] Outer Timeout in main loop for thumbnail {current_thumbnail_idx}. Misses: {consecutive_misses+1}")
                 consecutive_misses += 1
-                self.driver.execute_script(f"window.scrollBy(0, {random.randint(1000, 1500)});")
+                self.driver.execute_script(f"window.scrollBy(0, {random.randint(1000, 1500)});") # Larger scroll on timeout
                 time.sleep(exponential_backoff(consecutive_misses, base=0.5, max_d=cfg.SCROLL_PAUSE_TIME * 2))
             except (NoSuchElementException, StaleElementReferenceException) as e_thumb:
                 logger.warning(f"[Worker {self.worker_id}] Error processing thumbnail {current_thumbnail_idx}: {type(e_thumb).__name__}. Misses: {consecutive_misses+1}")
@@ -194,6 +196,7 @@ class UrlFetcher:
             except WebDriverException as e_wd:
                 logger.error(f"[Worker {self.worker_id}] WebDriverException: {e_wd}. Misses: {consecutive_misses+1}")
                 consecutive_misses += 1
+                # Potentially add a check here if the driver is still alive, if not, maybe break or re-initialize (complex)
                 time.sleep(exponential_backoff(consecutive_misses, base=1, max_d=cfg.MAX_RETRY_DELAY / 2))
             except Exception as e_main:
                 logger.error(f"[Worker {self.worker_id}] Unexpected error in main loop: {e_main}. Misses: {consecutive_misses+1}")
@@ -210,5 +213,5 @@ class UrlFetcher:
 
     def close(self):
         if hasattr(self, 'driver_manager') and self.driver_manager:
-            self.driver_manager.close_driver()
-            logger.info(f"[Worker {self.worker_id}] WebDriver closed for UrlFetcher of '{self.query}'.")
+            self.driver_manager.close_driver() # This will now respect the managed_driver flag
+            logger.info(f"[Worker {self.worker_id}] UrlFetcher for '{self.query}' signaled WebDriverManager to close if managed.")
