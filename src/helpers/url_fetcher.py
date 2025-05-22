@@ -96,14 +96,53 @@ class UrlFetcher:
             current_thumbnail_idx = processed_thumbnails + 1 
             
             try:
-                thumbnail_xpath = f'//*[@id="rso"]/div/div/div[1]/div/div/div[{current_thumbnail_idx}]/div[2]/h3/a/div/div/div/g-img'
+                item_xpath_base = f'//*[@id="rso"]/div/div/div[1]/div/div/div[{current_thumbnail_idx}]'
                 
-                img_thumbnail_element = WebDriverWait(self.driver, 5).until(
-                    EC.presence_of_element_located((By.XPATH, thumbnail_xpath))
-                )
+                try:
+                    item_element = WebDriverWait(self.driver, 5).until(
+                        EC.presence_of_element_located((By.XPATH, item_xpath_base))
+                    )
+                except TimeoutException:
+                    logger.warning(f"[Worker {self.worker_id}] Timeout waiting for item (thumbnail or other) at index {current_thumbnail_idx}. Misses: {consecutive_misses+1}")
+                    consecutive_misses += 1
+                    self.driver.execute_script(f"window.scrollBy(0, {random.randint(500, 800)});")
+                    time.sleep(exponential_backoff(consecutive_misses, base=0.5, max_d=cfg.SCROLL_PAUSE_TIME))
+                    continue
+
+                is_related_block = False
+                try:
+                    if "BA0zte" in item_element.get_attribute("class").split():
+                        is_related_block = True
+                    else:
+                        item_element.find_element(By.CLASS_NAME, "BA0zte")
+                        is_related_block = True
+                except NoSuchElementException:
+                    is_related_block = False
+                except Exception: 
+                    is_related_block = False
+
+                if is_related_block:
+                    logger.info(f"[Worker {self.worker_id}] Identified 'Related searches' block at index {current_thumbnail_idx}. Skipping.")
+                    processed_thumbnails += 1
+                    self.driver.execute_script(f"window.scrollBy(0, {random.randint(50, 150)});") 
+                    time.sleep(random.uniform(0.1, 0.3))
+                    continue
+
+                try:
+                    img_thumbnail_element = item_element.find_element(By.XPATH, "./div[2]/h3/a/div/div/div/g-img")
+                except NoSuchElementException:
+                    logger.warning(f"[Worker {self.worker_id}] Item at index {current_thumbnail_idx} not 'Related searches' but no g-img found. Misses: {consecutive_misses+1}")
+                    processed_thumbnails += 1 
+                    consecutive_misses += 1
+                    self.driver.execute_script(f"window.scrollBy(0, {random.randint(200, 400)});")
+                    time.sleep(random.uniform(0.2, 0.4))
+                    continue
+                
                 self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", img_thumbnail_element)
                 try:
-                    WebDriverWait(self.driver, 2).until(EC.element_to_be_clickable((By.XPATH, thumbnail_xpath)))
+                    # Use relative XPath from item_element to ensure we click the correct thumbnail
+                    clickable_thumbnail_xpath = "./div[2]/h3/a/div/div/div/g-img"
+                    WebDriverWait(item_element, 2).until(EC.element_to_be_clickable((By.XPATH, clickable_thumbnail_xpath)))
                     img_thumbnail_element.click()
                 except WebDriverException:
                     self.driver.execute_script("arguments[0].click();", img_thumbnail_element)
@@ -138,20 +177,8 @@ class UrlFetcher:
                     self.driver.execute_script(f"window.scrollBy(0, {random.randint(400, 600)});")
                     time.sleep(random.uniform(0.3, 0.7))
                 
-                if processed_thumbnails % 15 == 0:
-                    try:
-                        btn = self.driver.find_element(By.CLASS_NAME, "mye4qd")
-                        if btn.is_displayed() and btn.is_enabled():
-                            logger.info(f"[Worker {self.worker_id}] Clicking 'Show more results' button.")
-                            btn.click()
-                            time.sleep(3)
-                    except NoSuchElementException:
-                        logger.error(f"[Worker {self.worker_id}] 'Show more results' button (mye4qd) not found.")
-                    except Exception as e_sm:
-                        logger.warning(f"[Worker {self.worker_id}] Error clicking 'Show more results': {e_sm}")
-            
             except TimeoutException: 
-                logger.warning(f"[Worker {self.worker_id}] Timeout finding/clicking thumbnail {current_thumbnail_idx}. Misses: {consecutive_misses+1}")
+                logger.warning(f"[Worker {self.worker_id}] Outer Timeout in main loop for thumbnail {current_thumbnail_idx}. Misses: {consecutive_misses+1}")
                 consecutive_misses += 1
                 self.driver.execute_script(f"window.scrollBy(0, {random.randint(1000, 1500)});")
                 time.sleep(exponential_backoff(consecutive_misses, base=0.5, max_d=cfg.SCROLL_PAUSE_TIME * 2))
