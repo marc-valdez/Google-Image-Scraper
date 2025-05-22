@@ -112,10 +112,25 @@ class UrlFetcher:
 
                 # Try to find and click image with wait
                 try:
+                    # Wait for element and ensure it's in view
                     imgurl_element = WebDriverWait(self.driver, 5).until(
-                        EC.element_to_be_clickable((By.XPATH, search_string % current_selenium_item_index))
+                        EC.presence_of_element_located((By.XPATH, search_string % current_selenium_item_index))
                     )
-                    imgurl_element.click()
+                    
+                    # Scroll element into center view
+                    self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", imgurl_element)
+                    time.sleep(0.5)
+                    
+                    # Try regular click first
+                    try:
+                        WebDriverWait(self.driver, 3).until(
+                            EC.element_to_be_clickable((By.XPATH, search_string % current_selenium_item_index))
+                        )
+                        imgurl_element.click()
+                    except WebDriverException:
+                        # If regular click fails, try JavaScript click
+                        self.driver.execute_script("arguments[0].click();", imgurl_element)
+                    
                     missed_count = 0
                     attempt = 0
                 except TimeoutException:
