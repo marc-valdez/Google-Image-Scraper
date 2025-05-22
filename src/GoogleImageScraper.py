@@ -1,27 +1,35 @@
 import os
-from src.utils.cache_utils import ensure_cache_dir
+from src.utils.cache_utils import ensure_cache_dir, is_cache_complete
 from src.helpers.config import ScraperConfig
 from src.helpers.url_fetcher import UrlFetcher
 from src.helpers.image_downloader import ImageDownloader
-from src.environment.webdriver_manager import WebDriverManager
+from src.environment.webdriver import WebDriverManager
 from src.logging.logger import logger
 
-class GoogleImageScraper():
+class GoogleImageScraper:
     def __init__(self, config: ScraperConfig):
         self.config = config
 
-        if not os.path.exists(self.config.image_path):
-            logger.info(f"Creating output directory: {self.config.image_path}")
-            os.makedirs(self.config.image_path)
-        
-        ensure_cache_dir(self.config.cache_dir)
+        # Skip scraper setup entirely if cache is complete
+        if is_cache_complete(config):
+            logger.info(f"Skipping scraper for '{config.search_key_for_query}' — already completed")
+            self.skip = True
+            return
+        self.skip = False
 
-        self.webdriver_manager = WebDriverManager(config=self.config)
-        self.url_fetcher = UrlFetcher(config=self.config, webdriver_manager=self.webdriver_manager)
-        self.image_downloader = ImageDownloader(config=self.config)
-        logger.info(f"Initialized scraper for '{self.config.search_key_for_query}'")
+        os.makedirs(config.image_path, exist_ok=True)
+        ensure_cache_dir(config.cache_dir)
+
+        self.webdriver = WebDriverManager(config=config)
+        self.url_fetcher = UrlFetcher(config=config, webdriver=self.webdriver)
+        self.image_downloader = ImageDownloader(config=config)
+        logger.info(f"Initialized scraper for '{config.search_key_for_query}'")
 
     def fetch_image_urls(self):
+        if self.skip:
+            logger.info(f"Skipping URL fetch — already done for '{self.config.search_key_for_query}'")
+            return []
+
         logger.status(f"Searching for '{self.config.search_key_for_query}' images")
         try:
             image_urls = self.url_fetcher.find_image_urls()
@@ -35,10 +43,14 @@ class GoogleImageScraper():
             return []
 
     def download_images(self, image_urls, keep_filenames=False):
+        if self.skip:
+            logger.info(f"Skipping download — already done for '{self.config.search_key_for_query}'")
+            return 0
+
         if not image_urls:
             logger.info("No URLs provided for download")
             return 0
-        
+
         logger.status(f"Downloading {len(image_urls)} images for '{self.config.search_key_for_query}'")
         saved_count = self.image_downloader.save_images(
             image_urls=image_urls,
@@ -51,6 +63,8 @@ class GoogleImageScraper():
         return saved_count
 
     def close(self):
+        if self.skip:
+            return
         logger.info(f"Cleaning up resources for '{self.config.search_key_for_query}'")
-        if hasattr(self, 'webdriver_manager') and self.webdriver_manager:
-            self.webdriver_manager.close_driver()
+        if hasattr(self, 'webdriver') and self.webdriver:
+            self.webdriver.close_driver()

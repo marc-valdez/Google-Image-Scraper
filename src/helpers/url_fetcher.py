@@ -13,9 +13,9 @@ def exponential_backoff(attempt, base=1, max_d=60):
     return min(base * (2 ** attempt), max_d) + random.uniform(0, 0.1)
 
 class UrlFetcher:
-    def __init__(self, config, webdriver_manager):
+    def __init__(self, config, webdriver):
         self.config = config
-        self.driver = webdriver_manager.driver
+        self.driver = webdriver.driver
         self.search_key = config.search_key_for_query
         self.target = config.number_of_images
         self.cache_file = config.get_url_cache_file()

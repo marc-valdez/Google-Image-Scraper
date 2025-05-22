@@ -66,3 +66,20 @@ def remove_file_if_exists(file_path):
     except Exception as e:
         logger.error(f"Could not remove file {file_path}: {e}")
         return False
+    
+def is_cache_complete(config):
+    try:
+        url_file = config.get_url_cache_file()
+        image_file = config.get_image_metadata_file()
+        
+        if not os.path.isfile(url_file) or not os.path.isfile(image_file):
+            return False
+
+        with open(url_file, 'r', encoding='utf-8') as f:
+            urls = json.load(f)
+        with open(image_file, 'r', encoding='utf-8') as f:
+            images = json.load(f)
+
+        return len(urls) >= config.number_of_images and len(images) >= config.number_of_images
+    except Exception:
+        return False
