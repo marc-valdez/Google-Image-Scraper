@@ -18,7 +18,7 @@ def webdriver_executable():
         return 'chromedriver'
     return 'chromedriver.exe'
 
-def download_lastest_chromedriver(current_chrome_version=""):
+def download_lastest_chromedriver(current_chrome_version="", required_version=None, chrome_path=None):
     def get_platform_filename():
         filename = ''
         is_64bits = sys.maxsize > 2**32
@@ -48,13 +48,21 @@ def download_lastest_chromedriver(current_chrome_version=""):
 
         # Parse the latest version.
         
-        if current_chrome_version != "":
+        # Determine version to use
+        if required_version:
+            # Use explicitly required version
+            downloads = content["milestones"][required_version]
+        elif current_chrome_version:
+            # Use current Chrome version
             match = re.search(r'\d+', current_chrome_version)
-            downloads = content["milestones"][match.group()]
-        
+            if match:
+                downloads = content["milestones"][match.group()]
+            else:
+                raise ValueError(f"Invalid Chrome version format: {current_chrome_version}")
         else:
-            for milestone in content["milestones"]:
-                downloads = content["milestones"][milestone]
+            # Use latest version as fallback
+            latest_milestone = max(content["milestones"].keys())
+            downloads = content["milestones"][latest_milestone]
         
         for download in downloads["downloads"]["chromedriver"]:
             if (download["platform"] == get_platform_filename()):

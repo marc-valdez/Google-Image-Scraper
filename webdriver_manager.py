@@ -5,6 +5,7 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.service import Service as ChromeService
 import patch
 from logger import logger
 
@@ -43,8 +44,8 @@ class WebDriverManager:
             
             # Assuming patch.py's download_lastest_chromedriver can take chrome_exe_path
             # to determine the correct browser version for which to download chromedriver.
-            # If patch.py is simpler, it might just download the "latest stable" chromedriver.
-            is_patched = patch.download_lastest_chromedriver(chrome_exe_path=self.config.chrome_binary_path)
+            # Pass chrome_path instead of the old chrome_exe_path parameter
+            is_patched = patch.download_lastest_chromedriver(chrome_path=self.config.chrome_binary_path)
             if not is_patched:
                 raise RuntimeError(
                     f"ChromeDriver auto-patching/download failed. Attempted to place/update at '{self.config.webdriver_path}'. "
@@ -62,10 +63,24 @@ class WebDriverManager:
                 # Crucially, set the binary_location for Selenium to use the correct Chrome browser
                 options.binary_location = self.config.chrome_binary_path
                 
-                # Suppress Chrome logging
+                # Suppress Chrome logging and warnings
                 options.add_experimental_option('excludeSwitches', ['enable-logging'])
                 options.add_argument('--log-level=3')  # Only show fatal errors
                 options.add_argument('--silent')
+                options.add_argument('--disable-logging')
+                options.add_argument('--disable-dev-shm-usage')
+                # Suppress specific warnings
+                options.add_argument('--disable-gpu')  # Disables GPU hardware acceleration
+                options.add_argument('--no-sandbox')  # Disables the sandbox for all process types
+                options.add_argument('--disable-extensions')  # Disables extensions
+                options.add_argument('--disable-software-rasterizer')  # Disables software rasterizer
+                # Suppress voice transcription warnings
+                options.add_experimental_option('prefs', {
+                    'enable_media_stream': False,
+                    'enable_logging': False,
+                    'profile.default_content_settings.media_stream_mic': 2,  # 2=block
+                    'profile.default_content_settings.media_stream_camera': 2  # 2=block
+                })
                 
                 if self.config.headless:
                     options.add_argument('--headless')
@@ -74,12 +89,12 @@ class WebDriverManager:
                 logger.info(f"ChromeDriver: {self.config.webdriver_path}")
                 logger.info(f"Chrome Browser: {options.binary_location}")
 
-                # Suppress ChromeDriver logging
-                current_driver = webdriver.Chrome(
+                # Initialize ChromeDriver with proper selenium 4.x syntax
+                service = ChromeService(
                     executable_path=self.config.webdriver_path,
-                    options=options,
-                    service_log_path=os.devnull
+                    log_path=os.devnull
                 )
+                current_driver = webdriver.Chrome(service=service, options=options)
                 current_driver.set_window_size(1400, 1050) # Consider making this configurable
                 current_driver.get("https://www.google.com") # To accept cookies etc.
 
@@ -103,8 +118,11 @@ class WebDriverManager:
                         logger.info(f"ChromeDriver supports Chrome version {version_hint_from_error}")
                      
                     logger.info(f"Re-patching ChromeDriver to match Chrome version")
-                    # Pass chrome_exe_path for primary version detection, and version_hint_from_error as a secondary hint.
-                    if patch.download_lastest_chromedriver(chrome_exe_path=self.config.chrome_binary_path, required_version=version_hint_from_error):
+                    # Update parameters to match new function signature
+                    if patch.download_lastest_chromedriver(
+                        chrome_path=self.config.chrome_binary_path,
+                        required_version=version_hint_from_error
+                    ):
                         logger.info("ChromeDriver re-patched successfully - retrying")
                         continue # Retry the loop with the (hopefully) corrected ChromeDriver
                     else:
