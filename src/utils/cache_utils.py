@@ -56,24 +56,24 @@ def is_cache_complete(category_dir: str, search_term: str):
         image_metadata_file = cfg.get_image_metadata_file(category_dir, search_term)
         
         if not os.path.isfile(url_cache_file) or not os.path.isfile(image_metadata_file):
-            logger.debug(f"Cache not complete for '{search_term}' in '{category_dir}': Missing cache files.")
+            logger.warning(f"Cache not complete for '{search_term}' in '{category_dir}': Missing cache files.")
             return False
 
         url_data = load_json_data(url_cache_file)
         image_metadata = load_json_data(image_metadata_file)
 
         if not url_data or not image_metadata:
-            logger.debug(f"Cache not complete for '{search_term}' in '{category_dir}': Corrupted or empty cache files.")
+            logger.error(f"Cache not complete for '{search_term}' in '{category_dir}': Corrupted or empty cache files.")
             return False
 
         urls_found = url_data.get('urls', [])
         if not isinstance(urls_found, list) or len(urls_found) < cfg.NUM_IMAGES_PER_CLASS:
-            logger.debug(f"Cache not complete for '{search_term}' in '{category_dir}': Not enough URLs in cache ({len(urls_found)}/{cfg.NUM_IMAGES_PER_CLASS}).")
+            logger.error(f"Cache not complete for '{search_term}' in '{category_dir}': Not enough URLs in cache ({len(urls_found)}/{cfg.NUM_IMAGES_PER_CLASS}).")
             return False
 
         images_in_metadata = image_metadata.get('image_cache', {})
         if not isinstance(images_in_metadata, dict):
-            logger.debug(f"Cache not complete for '{search_term}' in '{category_dir}': Invalid image_cache format.")
+            logger.error(f"Cache not complete for '{search_term}' in '{category_dir}': Invalid image_cache format.")
             return False
 
         verified_image_count = 0
@@ -89,17 +89,17 @@ def is_cache_complete(category_dir: str, search_term: str):
                         if content_hash == img_entry.get('hash'):
                             verified_image_count += 1
                         else:
-                            logger.debug(f"Hash mismatch for cached image: {img_entry.get('filename')}")
+                            logger.error(f"Hash mismatch for cached image: {img_entry.get('filename')}")
                     except Exception as e_hash:
-                        logger.debug(f"Error verifying hash for {img_entry.get('filename')}: {e_hash}")
+                        logger.error(f"Error verifying hash for {img_entry.get('filename')}: {e_hash}")
                 else:
-                    logger.debug(f"Cached image file missing: {img_entry.get('path')}")
+                    logger.error(f"Cached image file missing: {img_entry.get('path')}")
             else:
-                logger.debug(f"URL {logger.truncate_url(url)} not found in image metadata.")
+                logger.error(f"URL {logger.truncate_url(url)} not found in image metadata.")
 
 
         if verified_image_count < cfg.NUM_IMAGES_PER_CLASS:
-            logger.debug(f"Cache not complete for '{search_term}' in '{category_dir}': Not enough verified images in metadata ({verified_image_count}/{cfg.NUM_IMAGES_PER_CLASS}).")
+            logger.error(f"Cache not complete for '{search_term}' in '{category_dir}': Not enough verified images in metadata ({verified_image_count}/{cfg.NUM_IMAGES_PER_CLASS}).")
             return False
         
         logger.info(f"Cache is complete for '{search_term}' in '{category_dir}'.")

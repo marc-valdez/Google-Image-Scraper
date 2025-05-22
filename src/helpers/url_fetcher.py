@@ -11,6 +11,7 @@ from src.utils.cache_utils import load_json_data, save_json_data
 from src.helpers import config as cfg
 import time
 import random
+import urllib.parse
 
 def exponential_backoff(attempt, base=1, max_d=None):
     max_delay = max_d if max_d is not None else cfg.MAX_RETRY_DELAY
@@ -18,27 +19,46 @@ def exponential_backoff(attempt, base=1, max_d=None):
 
 class UrlFetcher:
     def __init__(self, category_dir: str, search_term: str, worker_id: int):
-        self.category_dir = category_dir
-        self.search_term_orig = search_term
         self.worker_id = worker_id
         
         self.driver_manager = WebDriverManager()
         self.driver = self.driver_manager.driver
-
-        self.search_key_query = cfg.get_search_key_for_query(search_term, cfg.ADVANCED_SUFFIX)
-        self.target_images = cfg.NUM_IMAGES_PER_CLASS
-        self.cache_file_path = cfg.get_url_cache_file(self.category_dir, self.search_term_orig)
         
-        self.search_url = f"https://www.google.com/search?q={self.search_key_query}&source=lnms&tbm=isch&sa=X&ved=2ahUKEwie44_AnqLpAhUhBWMBHUFGD90Q_AUoAXoECBUQAw&biw=1920&bih=947"
-
+        self.search_key_query = cfg.get_search_key_for_query(search_term) 
+        self.target_images = cfg.NUM_IMAGES_PER_CLASS
+        self.cache_file_path = cfg.get_url_cache_file(category_dir, search_term)
+        
+        # Construct the Google Images search URL based on user's example and config
+        params = {
+            "as_st": "y",   # Advanced search type
+            "tbm": "isch",  # Crucial for image search
+            "sa": "X",      # Action code. X means a search was executed directly.
+            "ved": "2ahUKEwie44_AnqLpAhUhBWMBHUFGD90Q_AUoAXoECBUQAw", # A tracking/analytics value.
+            "biw": 1280,    # Browser inner width in pixels (e.g. viewport width).
+            "bih": 720,     # Browser inner height in pixels (e.g. viewport height).
+            "as_q": self.search_key_query,
+            "as_epq": cfg.SEARCH_QUERY_EXACT_PHRASE,
+            "as_oq": cfg.SEARCH_QUERY_ANY_OF_THESE_WORDS,
+            "as_eq": cfg.SEARCH_QUERY_EXCLUDE_THESE_WORDS,
+            "imgsz": cfg.SEARCH_QUERY_IMAGE_SIZE,
+            "imgar": cfg.SEARCH_QUERY_ASPECT_RATIO,
+            "imgc": cfg.SEARCH_QUERY_IMAGE_COLOR_TYPE,
+            "imgcolor": cfg.SEARCH_QUERY_SPECIFIC_COLOR,
+            "imgtype": cfg.SEARCH_QUERY_IMAGE_TYPE,
+            "cr": cfg.SEARCH_QUERY_COUNTRY_RESTRICTION,
+            "as_sitesearch": cfg.SEARCH_QUERY_SITE_SEARCH,
+            "as_filetype": cfg.SEARCH_QUERY_FILE_TYPE,
+        }
+        params = {k: v for k, v in params.items() if v != ""} # Strip out empty values
+        self.search_url = f"https://www.google.com/search?{urllib.parse.urlencode(params)}"
 
     def find_image_urls(self):
-        logger.status(f"[Worker {self.worker_id}] Searching for '{self.search_key_query}'")
+        logger.status(f"[Worker {self.worker_id}] Searching for '{self.search_key_query}' with URL: {self.search_url}")
         
         found_urls = []
-        cache_data = load_json_data(self.cache_file_path)
+        cache_data = load_json_data(self.cache_file_path) 
         
-        if cache_data and cache_data.get('search_key') == self.search_key_query:
+        if cache_data and cache_data.get('search_url_used') == self.search_url:
             found_urls = list(dict.fromkeys(cache_data.get('urls', [])))
             if len(found_urls) >= self.target_images:
                 logger.success(f"[Worker {self.worker_id}] Loaded {self.target_images} cached image URLs for '{self.search_key_query}'.")
@@ -55,10 +75,10 @@ class UrlFetcher:
                 EC.presence_of_element_located((By.TAG_NAME, "img"))
             )
         except TimeoutException:
-            logger.error(f"[Worker {self.worker_id}] Timeout loading initial image search page for '{self.search_key_query}'.")
+            logger.error(f"[Worker {self.worker_id}] Timeout loading initial image search page for '{self.search_key_query}'. URL: {self.search_url}")
             return found_urls
         except WebDriverException as e:
-            logger.error(f"[Worker {self.worker_id}] WebDriver error on initial page load for '{self.search_key_query}': {e}")
+            logger.error(f"[Worker {self.worker_id}] WebDriver error on initial page load for '{self.search_key_query}': {e}. URL: {self.search_url}")
             return found_urls
 
 
@@ -99,7 +119,7 @@ class UrlFetcher:
                         self.driver.execute_script("arguments[0].click();", img_thumbnail_element)
                         thumbnail_clicked = True
                     except Exception as e_js_click:
-                        logger.debug(f"[Worker {self.worker_id}] JS click failed for thumbnail {current_thumbnail_index}: {e_js_click}")
+                        logger.error(f"[Worker {self.worker_id}] JS click failed for thumbnail {current_thumbnail_index}: {e_js_click}")
                         processed_thumbnails += 1
                         consecutive_misses +=1
                         continue
@@ -127,14 +147,15 @@ class UrlFetcher:
                                 if len(found_urls) >= self.target_images: break
                         if extracted_this_round and len(found_urls) >= self.target_images: break
                     except TimeoutException:
-                        logger.debug(f"[Worker {self.worker_id}] Timeout waiting for high-res image with selector: {selector}")
+                        logger.error(f"[Worker {self.worker_id}] Timeout waiting for high-res image with selector: {selector}")
                     except StaleElementReferenceException:
-                         logger.debug(f"[Worker {self.worker_id}] Stale element with selector: {selector}")
+                        logger.error(f"[Worker {self.worker_id}] Stale element with selector: {selector}")
 
 
                 if extracted_this_round:
                     save_json_data(self.cache_file_path, {
-                        'search_key': self.search_key_query,
+                        'search_url_used': self.search_url, 
+                        'search_key': self.search_key_query, 
                         'number_of_images_requested': self.target_images,
                         'urls_found_count': len(found_urls),
                         'urls': found_urls
@@ -142,7 +163,7 @@ class UrlFetcher:
                     consecutive_misses = 0
                 else:
                     consecutive_misses += 1
-                    logger.debug(f"[Worker {self.worker_id}] No new high-res URL found for thumbnail {current_thumbnail_index}. Misses: {consecutive_misses}")
+                    logger.error(f"[Worker {self.worker_id}] No new high-res URL found for thumbnail {current_thumbnail_index}. Misses: {consecutive_misses}")
 
                 processed_thumbnails += 1
 
@@ -155,13 +176,12 @@ class UrlFetcher:
                             time.sleep(cfg.LOAD_BUTTON_WAIT)
                             consecutive_misses = 0
                     except NoSuchElementException:
-                        logger.debug(f"[Worker {self.worker_id}] 'Show more results' button not found or not needed yet.")
+                        logger.error(f"[Worker {self.worker_id}] 'Show more results' button not found or not needed yet.")
                     except Exception as e_sm:
                         logger.warning(f"[Worker {self.worker_id}] Error clicking 'Show more results': {e_sm}")
                 
                 self.driver.execute_script(f"window.scrollBy(0, {random.randint(600, 900)});")
                 time.sleep(cfg.SCROLL_PAUSE_TIME / 2)
-
 
             except (NoSuchElementException, StaleElementReferenceException, TimeoutException) as e_thumb:
                 logger.warning(f"[Worker {self.worker_id}] Error processing thumbnail {current_thumbnail_index}: {type(e_thumb).__name__}. Misses: {consecutive_misses}")

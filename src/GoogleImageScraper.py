@@ -11,7 +11,7 @@ class GoogleImageScraper:
         self.search_term = search_term
         self.worker_id = worker_id
 
-        self.search_key_for_query = cfg.get_search_key_for_query(self.search_term, cfg.ADVANCED_SUFFIX)
+        self.search_key_for_query = cfg.get_search_key_for_query(self.search_term)
         self.image_path = cfg.get_image_path(self.category_dir, self.search_term)
         self.cache_dir = cfg.get_cache_dir(self.category_dir, self.search_term)
 

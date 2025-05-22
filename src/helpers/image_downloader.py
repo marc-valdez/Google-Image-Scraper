@@ -37,7 +37,7 @@ class ImageDownloader:
         self.worker_id = worker_id
         
         self.image_path = cfg.get_image_path(self.category_dir, self.search_term)
-        self.search_key_query = cfg.get_search_key_for_query(self.search_term, cfg.ADVANCED_SUFFIX)
+        self.search_key_query = cfg.get_search_key_for_query(self.search_term)
         self.clean_base = cfg.get_clean_base_name(self.search_term)
 
         self.rate_limiter = RateLimiter()
