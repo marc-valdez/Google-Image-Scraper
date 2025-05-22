@@ -5,6 +5,7 @@ from selenium.common.exceptions import (
     NoSuchElementException, StaleElementReferenceException,
     TimeoutException, WebDriverException
 )
+from src.environment.webdriver import WebDriverManager
 from src.logging.logger import logger
 from src.utils.cache_utils import load_json_data, save_json_data
 import time, random
@@ -13,9 +14,10 @@ def exponential_backoff(attempt, base=1, max_d=60):
     return min(base * (2 ** attempt), max_d) + random.uniform(0, 0.1)
 
 class UrlFetcher:
-    def __init__(self, config, webdriver):
+    def __init__(self, config, worker_id):
         self.config = config
-        self.driver = webdriver.driver
+        self.worker_id = worker_id
+        self.driver = WebDriverManager(config).driver
         self.search_key = config.search_key_for_query
         self.target = config.number_of_images
         self.cache_file = config.get_url_cache_file()
@@ -35,7 +37,7 @@ class UrlFetcher:
         self.driver.get(self.search_url)
         WebDriverWait(self.driver, 10).until(EC.presence_of_element_located((By.TAG_NAME, "img")))
 
-        logger.start_progress(self.target - len(urls), f"Finding images for '{self.search_key}'")
+        logger.start_progress(self.target - len(urls), f"Finding images for '{self.search_key}'", self.worker_id)
         class_names = ["n3VNCb", "iPVvYb", "r48jcc", "pT0Scc", "H8Rx8c"]
         seen = set(urls)
         idx, attempt = 1, 0
@@ -62,7 +64,7 @@ class UrlFetcher:
                             urls.append(src)
                             seen.add(src)
                             logger.info(f"Image {len(urls)}: {logger.truncate_url(src)}")
-                            logger.update_progress()
+                            logger.update_progress(worker_id=self.worker_id)
                             save_json_data(self.cache_file, {
                                 'search_key': self.search_key,
                                 'number_of_images_requested': self.target,
@@ -95,6 +97,6 @@ class UrlFetcher:
                 attempt += 1
                 time.sleep(exponential_backoff(attempt))
 
-        logger.complete_progress()
+        logger.complete_progress(worker_id=self.worker_id)
         logger.success(f"Found {len(urls)} images")
         return urls[:self.target]

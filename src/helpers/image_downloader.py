@@ -27,8 +27,9 @@ def verify_image_file(file_path, content):
         return False
 
 class ImageDownloader:
-    def __init__(self, config):
+    def __init__(self, config, worker_id):
         self.config = config
+        self.worker_id = worker_id
         self.rate_limiter = RateLimiter()
         self.session = self._create_session()
         os.makedirs(self.config.image_path, exist_ok=True)
@@ -51,7 +52,6 @@ class ImageDownloader:
         cache.setdefault('image_cache', {})
         all_image_data = cache['image_cache']
 
-        # Check if all URLs are already valid and downloaded
         all_verified = all(
             url in all_image_data and
             os.path.exists(all_image_data[url]['path']) and
@@ -63,7 +63,7 @@ class ImageDownloader:
             logger.info(f"All {len(image_urls)} images already downloaded and verified for '{self.config.search_key_for_query}'.")
             return 0
 
-        logger.start_progress(len(image_urls), f"Downloading images for '{self.config.search_key_for_query}'")
+        logger.start_progress(len(image_urls), f"Downloading images for '{self.config.search_key_for_query}'", self.worker_id)
         saved_count = 0
 
         for idx, url in enumerate(image_urls):
@@ -97,7 +97,7 @@ class ImageDownloader:
                     with open(all_image_data[url]['path'], 'rb') as f:
                         if hashlib.md5(f.read()).hexdigest() == all_image_data[url]['hash']:
                             logger.info(f"Already downloaded and verified: {filename}")
-                            logger.update_progress()
+                            logger.update_progress(worker_id=self.worker_id)
                             continue
 
                 image_hash = hashlib.md5(content).hexdigest()
@@ -125,7 +125,7 @@ class ImageDownloader:
                 save_json_data(metadata_file, cache)
                 logger.info(f"Saved: {filename}")
                 saved_count += 1
-                logger.update_progress()
+                logger.update_progress(worker_id=self.worker_id)
 
             except requests.exceptions.RequestException as e:
                 logger.error(f"Network error for {logger.truncate_url(url)}: {e}")
@@ -134,7 +134,7 @@ class ImageDownloader:
             except Exception as e:
                 logger.error(f"Failed to save {logger.truncate_url(url)}: {e}")
 
-        logger.complete_progress()
+        logger.complete_progress(worker_id=self.worker_id)
         if saved_count > 0:
             logger.success(f"Downloaded {saved_count} new images.")
         else:

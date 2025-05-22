@@ -7,10 +7,9 @@ from src.environment.webdriver import WebDriverManager
 from src.logging.logger import logger
 
 class GoogleImageScraper:
-    def __init__(self, config: ScraperConfig):
+    def __init__(self, config: ScraperConfig, worker_id):
         self.config = config
 
-        # Skip scraper setup entirely if cache is complete
         if is_cache_complete(config):
             logger.info(f"Skipping scraper for '{config.search_key_for_query}' — already completed")
             self.skip = True
@@ -20,9 +19,8 @@ class GoogleImageScraper:
         os.makedirs(config.image_path, exist_ok=True)
         ensure_cache_dir(config.cache_dir)
 
-        self.webdriver = WebDriverManager(config=config)
-        self.url_fetcher = UrlFetcher(config=config, webdriver=self.webdriver)
-        self.image_downloader = ImageDownloader(config=config)
+        self.url_fetcher = UrlFetcher(config, worker_id)
+        self.image_downloader = ImageDownloader(config, worker_id)
         logger.info(f"Initialized scraper for '{config.search_key_for_query}'")
 
     def fetch_image_urls(self):
