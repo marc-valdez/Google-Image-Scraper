@@ -32,9 +32,6 @@ class UrlFetcher:
             "as_st": "y",   # Advanced search type
             "tbm": "isch",  # Crucial for image search
             "sa": "X",      # Action code. X means a search was executed directly.
-            "ved": "2ahUKEwie44_AnqLpAhUhBWMBHUFGD90Q_AUoAXoECBUQAw", # A tracking/analytics value.
-            "biw": 1280,    # Browser inner width in pixels (e.g. viewport width).
-            "bih": 720,     # Browser inner height in pixels (e.g. viewport height).
             "as_q": self.query,
             "as_epq": cfg.SEARCH_QUERY_EXACT_PHRASE,
             "as_oq": cfg.SEARCH_QUERY_ANY_OF_THESE_WORDS,
@@ -55,10 +52,15 @@ class UrlFetcher:
         logger.status(f"[Worker {self.worker_id}] Searching for '{self.query}' with URL: {self.search_url}")
         
         found_urls = []
+        processed_thumbnails_start_index = 0
         cache_data = load_json_data(self.cache_file_path) 
         
         if cache_data and cache_data.get('search_url_used') == self.search_url:
             found_urls = list(dict.fromkeys(cache_data.get('urls', [])))
+            processed_thumbnails_start_index = cache_data.get('processed_thumbnails_count', 0)
+            if processed_thumbnails_start_index > 0:
+                logger.info(f"[Worker {self.worker_id}] Resuming, previously processed {processed_thumbnails_start_index} thumbnails.")
+
             if len(found_urls) >= self.target_images:
                 logger.success(f"[Worker {self.worker_id}] Loaded {self.target_images} cached image URLs for '{self.query}'.")
                 return found_urls[:self.target_images]
@@ -89,7 +91,7 @@ class UrlFetcher:
         
         high_res_image_selectors = ["n3VNCb", "iPVvYb", "r48jcc", "pT0Scc", "H8Rx8c"]
 
-        processed_thumbnails = 0
+        processed_thumbnails = processed_thumbnails_start_index if cache_data and cache_data.get('search_url_used') == self.search_url else 0
         consecutive_misses = 0
         
         while len(found_urls) < self.target_images and consecutive_misses < cfg.MAX_MISSED:
@@ -140,7 +142,6 @@ class UrlFetcher:
                 
                 self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", img_thumbnail_element)
                 try:
-                    # Use relative XPath from item_element to ensure we click the correct thumbnail
                     clickable_thumbnail_xpath = "./div[2]/h3/a/div/div/div/g-img"
                     WebDriverWait(item_element, 2).until(EC.element_to_be_clickable((By.XPATH, clickable_thumbnail_xpath)))
                     img_thumbnail_element.click()
@@ -163,7 +164,8 @@ class UrlFetcher:
                                 'search_key': self.query, 
                                 'number_of_images_requested': self.target_images,
                                 'urls_found_count': len(found_urls),
-                                'urls': found_urls
+                                'urls': found_urls,
+                                'processed_thumbnails_count': processed_thumbnails
                             })
                             image_found_this_iteration = True
                             if len(found_urls) >= self.target_images: break

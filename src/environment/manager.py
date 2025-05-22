@@ -15,7 +15,7 @@ class EnvironmentResolver:
             os.makedirs(default_dir, exist_ok=True)
             logger.info(f"Created webdriver directory: {default_dir}")
 
-        logger.warning(f"Using default webdriver path: {default_path}")
+        logger.info(f"Using default webdriver path: {default_path}")
         return default_path
 
     @staticmethod
