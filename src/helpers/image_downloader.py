@@ -35,15 +35,11 @@ class ImageDownloader:
     def __init__(self, category_dir: str, class_name: str, worker_id: int):
         self.category_dir = category_dir
         self.class_name = class_name
-        self.worker_id = worker_id
-        
+        self.worker_id = worker_id      
         self.image_path = cfg.get_image_path(self.category_dir, self.class_name)
-        self.clean_base = cfg.get_clean_base_name(self.class_name) # class_name is already assigned
-
         self.rate_limiter = RateLimiter()
         self.session = self._create_session()
         os.makedirs(self.image_path, exist_ok=True)
-
         self.base_output_dir = cfg.get_output_dir() 
 
     def _create_session(self):
@@ -141,11 +137,12 @@ class ImageDownloader:
 
                 if keep_filenames:
                     base_from_url = os.path.splitext(original_filename_from_url)[0]
-                    file_base_name = base_from_url or f"{self.clean_base}_{len(all_image_data)+1:03d}"
+                    file_base_name = base_from_url or f"{cfg.sanitize_class_name(self.class_name)}_{len(all_image_data)+1:03d}"
+                    filename = f"{file_base_name}.{img_format}"
                 else:
-                    file_base_name = f"{self.clean_base}_{len(all_image_data)+1:03d}"
+                    base_name_from_config = cfg.format_filename(self.class_name, len(all_image_data) + 1)
+                    filename = f"{base_name_from_config}.{img_format}"
                 
-                filename = f"{file_base_name}.{img_format}"
                 absolute_save_path = os.path.join(self.image_path, filename)
 
                 image_hash = hashlib.md5(content).hexdigest() # Hash of NEWLY downloaded content

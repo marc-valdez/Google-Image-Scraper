@@ -1,4 +1,5 @@
 import os
+import re
 
 NUM_WORKERS = 4
 NUM_IMAGES_PER_CLASS = 500
@@ -45,13 +46,17 @@ def get_image_path(category_dir: str, class_name: str) -> str:
 def get_cache_dir(category_dir: str, class_name: str) -> str:
     return os.path.join(get_image_path(category_dir, class_name), ".cache")
 
-def get_clean_base_name(class_name: str) -> str:
-    return class_name.replace(" ", "") or "Unnamed"
+def sanitize_class_name(name: str) -> str:
+    return re.sub(r'[^A-Za-z0-9]', '', name.title())
+
+def format_filename(class_name: str, index: int) -> str:
+    sanitized = sanitize_class_name(class_name)
+    return f"{index:03}_{sanitized}"
 
 def get_url_cache_file(category_dir: str, class_name: str) -> str:
     return os.path.join(get_cache_dir(category_dir, class_name),
-                        f"{get_clean_base_name(class_name)}_urls.json")
+                        f"{sanitize_class_name(class_name)}_urls.json")
 
 def get_image_metadata_file(category_dir: str, class_name: str) -> str:
     return os.path.join(get_cache_dir(category_dir, class_name),
-                        f"{get_clean_base_name(class_name)}_metadata.json")
+                        f"{sanitize_class_name(class_name)}_metadata.json")
