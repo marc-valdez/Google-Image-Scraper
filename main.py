@@ -9,9 +9,9 @@ from config import ScraperConfig
 from logger import logger
 
 # Configuration constants
-NUM_WORKERS = 1
-NUM_IMAGES_PER_CLASS = 2 #500
-SUFFIX = '(filipino AND food OR meal)'
+NUM_WORKERS = 8
+NUM_IMAGES_PER_CLASS = 500
+SUFFIX = '(filipino OR food OR meal)'
 CATEGORIES_FILE = "categories.json"
 HEADLESS_MODE = True
 
@@ -47,9 +47,10 @@ def process_search_tasks(categories_data):
                 logger.warning(f"Skipping invalid search term in category '{category}'")
     return tasks
 
-def worker_thread(category_name, search_key, suffix, num_images=10, headless=True):
+def worker_thread(category_name, search_key, suffix, worker_id, num_images=10, headless=True):
     """Worker thread function to scrape images for a given search key within a category."""
     try:
+        prefix = f"[Worker {worker_id}]"
         config = ScraperConfig.create_instance(
             category_dir=category_name,
             search_term=search_key,
@@ -58,7 +59,7 @@ def worker_thread(category_name, search_key, suffix, num_images=10, headless=Tru
             headless=headless
         )
         
-        logger.status(f"Starting search for '{search_key}' in category '{category_name}'")
+        logger.status(f"{prefix} Starting search for '{search_key}' in category '{category_name}'")
         
         image_scraper = GoogleImageScraper(config=config)
         image_urls = image_scraper.fetch_image_urls()
@@ -66,13 +67,13 @@ def worker_thread(category_name, search_key, suffix, num_images=10, headless=Tru
         if image_urls:
             image_scraper.download_images(image_urls)
         else:
-            logger.warning(f"No images found for '{search_key}' in '{category_name}' - skipping download")
+            logger.warning(f"{prefix} No images found for '{search_key}' in '{category_name}' - skipping download")
         
         image_scraper.close()
         del image_scraper
-        logger.success(f"Completed search for '{search_key}' in '{category_name}'")
+        logger.success(f"{prefix} Completed search for '{search_key}' in '{category_name}'")
     except Exception as e:
-        logger.error(f"Failed processing '{search_key}' in '{category_name}': {e}")
+        logger.error(f"{prefix} Failed processing '{search_key}' in '{category_name}': {e}")
 
 def ensure_output_directory():
     """Ensure the base output directory exists."""
@@ -91,9 +92,10 @@ def run_parallel_tasks(tasks):
                 task['category'],
                 task['search_key'],
                 SUFFIX,
+                worker_id,  # Add worker ID
                 NUM_IMAGES_PER_CLASS,
                 HEADLESS_MODE
-            ) for task in tasks
+            ) for worker_id, task in enumerate(tasks)
         ]
         for future in concurrent.futures.as_completed(futures):
             try:

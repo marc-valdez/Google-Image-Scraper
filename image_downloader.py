@@ -5,8 +5,8 @@ import hashlib
 from PIL import Image
 from urllib.parse import urlparse
 from requests.adapters import HTTPAdapter
-from requests.packages.urllib3.util.retry import Retry
 import requests
+from urllib3 import Retry
 from cache_utils import load_json_data, save_json_data, remove_file_if_exists
 from logger import logger
 
