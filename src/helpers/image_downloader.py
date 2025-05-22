@@ -40,7 +40,7 @@ class ImageDownloader:
         self.rate_limiter = RateLimiter()
         self.session = self._create_session()
         os.makedirs(self.image_path, exist_ok=True)
-        self.base_output_dir = cfg.get_output_dir() 
+        self.base_output_dir = cfg.get_output_dir()
 
     def _create_session(self):
         session = requests.Session()
@@ -56,10 +56,167 @@ class ImageDownloader:
         return session
 
     def _get_absolute_path_from_metadata(self, entry):
-        relative_path = entry.get('relative_path') # Use .get() for safety
-        if relative_path: # Check if it's not None and not empty
+        relative_path = entry.get('relative_path')
+        if relative_path:
             return os.path.join(self.base_output_dir, relative_path)
         return None
+
+    def _prepare_download_list(self, image_urls: list, all_image_data: dict) -> list:
+        urls_to_download = []
+        for url in image_urls:
+            entry = all_image_data.get(url)
+            if entry:
+                abs_path = self._get_absolute_path_from_metadata(entry)
+                if abs_path and os.path.exists(abs_path) and \
+                   verify_image_file(abs_path, entry.get('hash')):
+                    continue 
+            urls_to_download.append(url)
+        return urls_to_download
+
+    def _fetch_image_content(self, url: str) -> tuple[bytes | None, requests.Response | None]:
+        try:
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+                "Referer": url 
+            }
+            response = self.session.get(url, headers=headers, timeout=cfg.CONNECTION_TIMEOUT)
+            response.raise_for_status()
+            return response.content, response
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Network error for {logger.truncate_url(url)}: {e}")
+            return None, None
+
+    def _extract_image_details(self, content: bytes, url: str, original_filename_from_url: str, keep_filenames: bool, current_image_count: int) -> tuple[str, str, dict]:
+        exif_data = {}
+        img_format = 'jpg' # Default format
+
+        try:
+            with Image.open(io.BytesIO(content)) as img:
+                img_format = img.format.lower() if img.format else 'jpg'
+                exif_data['width'] = img.width
+                exif_data['height'] = img.height
+                exif_data['mode'] = img.mode
+                if hasattr(img, '_getexif'):
+                    exif = img._getexif()
+                    if exif:
+                        for k, v in exif.items():
+                            if k in Image.TAGS:
+                                exif_data[Image.TAGS[k]] = v if isinstance(v, (str, int, float, bool)) else str(v)
+        except UnidentifiedImageError:
+            logger.warning(f"Could not identify image from URL (falling back to extension): {logger.truncate_url(url)}")
+            ext = os.path.splitext(urlparse(url).path)[1][1:].lower()
+            if ext in ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'tiff']:
+                img_format = ext
+        except Exception as e:
+            logger.warning(f"Error processing image details for {logger.truncate_url(url)} with PIL: {e}")
+            ext = os.path.splitext(urlparse(url).path)[1][1:].lower()
+            if ext in ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'tiff']:
+                img_format = ext
+        
+        if keep_filenames:
+            base_from_url = os.path.splitext(original_filename_from_url)[0]
+            file_base_name = base_from_url or f"{cfg.sanitize_class_name(self.class_name)}_{current_image_count + 1:03d}"
+            filename = f"{file_base_name}.{img_format}"
+        else:
+            base_name_from_config = cfg.format_filename(self.class_name, current_image_count + 1)
+            filename = f"{base_name_from_config}.{img_format}"
+            
+        return filename, img_format, exif_data
+
+    def _save_and_verify_image(self, content: bytes, absolute_save_path: str, expected_hash: str) -> bool:
+        try:
+            with open(absolute_save_path, 'wb') as f:
+                f.write(content)
+            
+            if not verify_image_file(absolute_save_path, expected_hash): 
+                if os.path.exists(absolute_save_path):
+                    os.remove(absolute_save_path)
+                raise Exception("File integrity verification failed after saving.")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to save or verify image {absolute_save_path}: {e}")
+            if os.path.exists(absolute_save_path): # Attempt cleanup if save failed mid-way or verification failed
+                try:
+                    os.remove(absolute_save_path)
+                except Exception as rem_e:
+                    logger.error(f"Failed to remove corrupted file {absolute_save_path}: {rem_e}")
+            return False
+
+    def _update_metadata_entry(self, url: str, filename: str, original_filename: str, image_hash: str, relative_path: str, img_format: str, content_len: int, exif_data: dict, current_time_iso: str) -> dict:
+        return {
+            'filename': filename,
+            'original_filename': original_filename,
+            'hash': image_hash,
+            'relative_path': relative_path,
+            'downloaded_at': current_time_iso,
+            'updated_at': current_time_iso,
+            'format': img_format,
+            'size': content_len,
+            'exif': exif_data,
+        }
+
+    def _handle_existing_verified_image(self, url: str, existing_entry: dict, new_image_hash: str, metadata_file: str, cache: dict, current_time_iso: str):
+        logger.info(f"File {existing_entry.get('filename', 'N/A')} for URL {logger.truncate_url(url)} exists and content matches current download.")
+        metadata_updated_this_cycle = False
+        
+        if existing_entry.get('hash') != new_image_hash:
+            logger.warning(f"Updating stale hash for {existing_entry.get('filename', 'N/A')}. Old: {existing_entry.get('hash')}, New: {new_image_hash}")
+            existing_entry['hash'] = new_image_hash
+            metadata_updated_this_cycle = True
+        
+        if not existing_entry.get('downloaded_at'):
+            existing_entry['downloaded_at'] = current_time_iso
+            metadata_updated_this_cycle = True
+        
+        if metadata_updated_this_cycle:
+            existing_entry['updated_at'] = current_time_iso
+            cache['updated_at'] = current_time_iso
+            save_json_data(metadata_file, cache)
+            logger.info(f"Metadata updated for {existing_entry.get('filename', 'N/A')}.")
+
+    def _process_single_image_download(self, url: str, all_image_data: dict, keep_filenames: bool, metadata_file: str, cache: dict) -> bool:
+        self.rate_limiter.wait()
+        
+        content, _ = self._fetch_image_content(url)
+        if not content:
+            return False
+
+        original_filename_from_url = os.path.basename(urlparse(url).path)
+        image_hash = hashlib.md5(content).hexdigest()
+        current_time_iso = datetime.now().isoformat()
+
+        # Check if this exact content (based on new hash) already exists and is verified
+        if url in all_image_data:
+            existing_entry = all_image_data[url]
+            existing_abs_path = self._get_absolute_path_from_metadata(existing_entry)
+            if existing_abs_path and os.path.exists(existing_abs_path) and verify_image_file(existing_abs_path, image_hash):
+                self._handle_existing_verified_image(url, existing_entry, image_hash, metadata_file, cache, current_time_iso)
+                return False # Not a new save, but metadata might have been updated
+
+        # Determine filename and extract details
+        # Pass len(all_image_data) for consistent numbering if a new image is added
+        filename, img_format, exif_data = self._extract_image_details(content, url, original_filename_from_url, keep_filenames, len(all_image_data))
+        absolute_save_path = os.path.join(self.image_path, filename)
+
+        # Save and verify
+        if not self._save_and_verify_image(content, absolute_save_path, image_hash):
+            return False # Save or verification failed
+
+        # Update metadata
+        relative_image_path = os.path.relpath(absolute_save_path, self.base_output_dir).replace('\\', '/')
+        all_image_data[url] = self._update_metadata_entry(
+            url, filename, original_filename_from_url, image_hash, 
+            relative_image_path, img_format, len(content), exif_data, current_time_iso
+        )
+        
+        cache.update({
+            'image_cache': all_image_data,
+            'updated_at': current_time_iso
+        })
+        save_json_data(metadata_file, cache)
+        logger.info(f"Saved: {filename}")
+        return True
+
 
     def save_images(self, image_urls, keep_filenames):
         if not image_urls:
@@ -72,22 +229,12 @@ class ImageDownloader:
         cache.setdefault('image_cache', {})
         all_image_data = cache['image_cache']
 
-        urls_to_download = []
-        for url in image_urls:
-            entry = all_image_data.get(url)
-            if entry:
-                abs_path = self._get_absolute_path_from_metadata(entry)
-                if abs_path and os.path.exists(abs_path) and \
-                   verify_image_file(abs_path, entry.get('hash')):
-                    continue 
-            urls_to_download.append(url)
+        urls_to_download = self._prepare_download_list(image_urls, all_image_data)
 
         if not urls_to_download:
             logger.info(f"All {len(image_urls)} images already downloaded and verified for '{self.class_name}'.")
-            if 'class_name' not in cache: 
-                 cache['class_name'] = self.class_name
-            if 'created_at' not in cache:
-                cache['created_at'] = datetime.now().isoformat()
+            if 'class_name' not in cache: cache['class_name'] = self.class_name
+            if 'created_at' not in cache: cache['created_at'] = datetime.now().isoformat()
             cache['updated_at'] = datetime.now().isoformat()
             save_json_data(metadata_file, cache)
             return 0
@@ -96,125 +243,17 @@ class ImageDownloader:
         logger.start_progress(num_to_download_in_batch, f"Downloading images for '{self.class_name}'", self.worker_id)
         saved_count = 0
 
-        if 'class_name' not in cache: 
-            cache['class_name'] = self.class_name
-        if 'created_at' not in cache:
-            cache['created_at'] = datetime.now().isoformat()
+        if 'class_name' not in cache: cache['class_name'] = self.class_name
+        if 'created_at' not in cache: cache['created_at'] = datetime.now().isoformat()
 
         for idx, url in enumerate(urls_to_download):
-            self.rate_limiter.wait()
-            
-            items_processed_in_batch = idx
-            logger.info(f"Downloading {items_processed_in_batch + 1}/{num_to_download_in_batch}: {logger.truncate_url(url)}")
-            
+            logger.info(f"Downloading {idx + 1}/{num_to_download_in_batch}: {logger.truncate_url(url)}")
             try:
-                headers = {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-                    "Referer": url 
-                }
-                response = self.session.get(url, headers=headers, timeout=cfg.CONNECTION_TIMEOUT)
-                response.raise_for_status()
-                content = response.content
-                
-                original_filename_from_url = os.path.basename(urlparse(url).path)
-                exif_data = {}
-
-                try:
-                    with Image.open(io.BytesIO(content)) as img:
-                        img_format = img.format.lower() if img.format else 'jpg'
-                        exif_data['width'] = img.width
-                        exif_data['height'] = img.height
-                        exif_data['mode'] = img.mode
-                        if hasattr(img, '_getexif'):
-                            exif = img._getexif()
-                            if exif:
-                                for k, v in exif.items():
-                                    if k in Image.TAGS:
-                                        exif_data[Image.TAGS[k]] = v if isinstance(v, (str, int, float, bool)) else str(v)
-                except Exception:
-                    ext = os.path.splitext(urlparse(url).path)[1][1:].lower()
-                    img_format = ext if ext in ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'tiff'] else 'jpg'
-
-                if keep_filenames:
-                    base_from_url = os.path.splitext(original_filename_from_url)[0]
-                    file_base_name = base_from_url or f"{cfg.sanitize_class_name(self.class_name)}_{len(all_image_data)+1:03d}"
-                    filename = f"{file_base_name}.{img_format}"
-                else:
-                    base_name_from_config = cfg.format_filename(self.class_name, len(all_image_data) + 1)
-                    filename = f"{base_name_from_config}.{img_format}"
-                
-                absolute_save_path = os.path.join(self.image_path, filename)
-
-                image_hash = hashlib.md5(content).hexdigest() # Hash of NEWLY downloaded content
-                current_time_iso = datetime.now().isoformat()
-
-                if url in all_image_data:
-                    existing_entry = all_image_data[url]
-                    existing_abs_path = self._get_absolute_path_from_metadata(existing_entry)
-                    
-                    # If file exists on disk and its content matches the NEWLY downloaded content
-                    if existing_abs_path and os.path.exists(existing_abs_path) and verify_image_file(existing_abs_path, image_hash):
-                        logger.info(f"File {existing_entry.get('filename', filename)} for URL {logger.truncate_url(url)} exists and content matches current download.")
-                        metadata_updated_this_cycle = False
-                        
-                        if existing_entry.get('hash') != image_hash:
-                            logger.warning(f"Updating stale hash for {existing_entry.get('filename', filename)}. Old: {existing_entry.get('hash')}, New: {image_hash}")
-                            existing_entry['hash'] = image_hash
-                            metadata_updated_this_cycle = True
-                        
-                        if not existing_entry.get('downloaded_at'): # Ensure downloaded_at is set
-                            existing_entry['downloaded_at'] = current_time_iso
-                            metadata_updated_this_cycle = True
-                        
-                        if metadata_updated_this_cycle:
-                            existing_entry['updated_at'] = current_time_iso
-                            cache['updated_at'] = current_time_iso # Mark the whole cache file as updated
-                            save_json_data(metadata_file, cache)
-                            logger.info(f"Metadata updated for {existing_entry.get('filename', filename)}.")
-                        
-                        logger.update_progress(worker_id=self.worker_id)
-                        continue 
-
-                # Proceed to save the file (either new or overwriting if stale/different)
-                with open(absolute_save_path, 'wb') as f:
-                    f.write(content)
-
-                if not verify_image_file(absolute_save_path, image_hash): 
-                    if os.path.exists(absolute_save_path):
-                        os.remove(absolute_save_path)
-                    raise Exception("File integrity verification failed after saving.")
-                
-                relative_image_path = os.path.relpath(absolute_save_path, self.base_output_dir).replace('\\', '/')
-                
-                all_image_data[url] = {
-                    'filename': filename,
-                    'original_filename': original_filename_from_url,
-                    'hash': image_hash,
-                    'relative_path': relative_image_path,
-                    'downloaded_at': current_time_iso,
-                    'updated_at': current_time_iso,
-                    'format': img_format,
-                    'size': len(content),
-                    'exif': exif_data,
-                }
-
-                cache.update({
-                    'image_cache': all_image_data,
-                    'updated_at': current_time_iso
-                })
-                save_json_data(metadata_file, cache)
-                logger.info(f"Saved: {filename}")
-                saved_count += 1
-                logger.update_progress(worker_id=self.worker_id)
-
-            except requests.exceptions.RequestException as e:
-                logger.error(f"Network error for {logger.truncate_url(url)}: {e}")
-                logger.update_progress(worker_id=self.worker_id) 
-            except UnidentifiedImageError:
-                logger.error(f"Invalid image data: {logger.truncate_url(url)}")
-                logger.update_progress(worker_id=self.worker_id)
-            except Exception as e:
-                logger.error(f"Failed to save {logger.truncate_url(url)}: {e}")
+                if self._process_single_image_download(url, all_image_data, keep_filenames, metadata_file, cache):
+                    saved_count += 1
+            except Exception as e: # Catch-all for unexpected errors during single image processing
+                logger.error(f"Unexpected error processing {logger.truncate_url(url)}: {e}")
+            finally:
                 logger.update_progress(worker_id=self.worker_id)
 
         logger.complete_progress(worker_id=self.worker_id)
@@ -227,7 +266,7 @@ class ImageDownloader:
         
         logger.info(f"Total in metadata for '{self.class_name}': {len(all_image_data)}")
         
-        cache['updated_at'] = datetime.now().isoformat() # Final update to overall cache timestamp
+        cache['updated_at'] = datetime.now().isoformat()
         save_json_data(metadata_file, cache)
         
         return saved_count
