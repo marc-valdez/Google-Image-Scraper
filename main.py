@@ -1,4 +1,3 @@
-# Initialize absl and logging first, before any other imports
 import sys
 from absl import app
 from init_logging import configure_logging
@@ -11,7 +10,8 @@ from logger import logger
 
 # Configuration constants
 NUM_WORKERS = 1
-IMAGES_PER_SEARCH = 2
+NUM_IMAGES_PER_CLASS = 2 #500
+SUFFIX = '(filipino AND food OR meal)'
 CATEGORIES_FILE = "categories.json"
 HEADLESS_MODE = True
 
@@ -47,12 +47,13 @@ def process_search_tasks(categories_data):
                 logger.warning(f"Skipping invalid search term in category '{category}'")
     return tasks
 
-def worker_thread(category_name, search_key, num_images=10, headless=True):
+def worker_thread(category_name, search_key, suffix, num_images=10, headless=True):
     """Worker thread function to scrape images for a given search key within a category."""
     try:
         config = ScraperConfig.create_instance(
             category_dir=category_name,
-            search_term=search_key,  # Fix parameter name to match ScraperConfig.create_instance
+            search_term=search_key,
+            advanced_suffix=suffix,
             number_of_images=num_images,
             headless=headless
         )
@@ -89,7 +90,8 @@ def run_parallel_tasks(tasks):
                 worker_thread,
                 task['category'],
                 task['search_key'],
-                IMAGES_PER_SEARCH,
+                SUFFIX,
+                NUM_IMAGES_PER_CLASS,
                 HEADLESS_MODE
             ) for task in tasks
         ]
@@ -101,7 +103,6 @@ def run_parallel_tasks(tasks):
 
 def main(argv):
     """Main entry point for the scraper"""
-    # Configure logging
     logger.set_verbose(False)  # Only show important messages by default
     
     # Load and validate categories
