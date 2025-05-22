@@ -38,14 +38,12 @@ class ImageDownloader:
         self.worker_id = worker_id
         
         self.image_path = cfg.get_image_path(self.category_dir, self.class_name)
-        self.class_name = self.class_name
-        self.clean_base = cfg.get_clean_base_name(self.class_name)
+        self.clean_base = cfg.get_clean_base_name(self.class_name) # class_name is already assigned
 
         self.rate_limiter = RateLimiter()
         self.session = self._create_session()
         os.makedirs(self.image_path, exist_ok=True)
 
-        # Removed ETACalculator instantiation
         self.base_output_dir = cfg.get_output_dir() 
 
     def _create_session(self):
@@ -62,8 +60,9 @@ class ImageDownloader:
         return session
 
     def _get_absolute_path_from_metadata(self, entry):
-        if 'relative_path' in entry:
-            return os.path.join(self.base_output_dir, entry['relative_path'])
+        relative_path = entry.get('relative_path') # Use .get() for safety
+        if relative_path: # Check if it's not None and not empty
+            return os.path.join(self.base_output_dir, relative_path)
         return None
 
     def save_images(self, image_urls, keep_filenames):
@@ -149,20 +148,37 @@ class ImageDownloader:
                 filename = f"{file_base_name}.{img_format}"
                 absolute_save_path = os.path.join(self.image_path, filename)
 
-                image_hash = hashlib.md5(content).hexdigest()
+                image_hash = hashlib.md5(content).hexdigest() # Hash of NEWLY downloaded content
                 current_time_iso = datetime.now().isoformat()
 
                 if url in all_image_data:
                     existing_entry = all_image_data[url]
                     existing_abs_path = self._get_absolute_path_from_metadata(existing_entry)
+                    
+                    # If file exists on disk and its content matches the NEWLY downloaded content
                     if existing_abs_path and os.path.exists(existing_abs_path) and verify_image_file(existing_abs_path, image_hash):
-                        # Update timestamp if file is re-verified, though it's already downloaded
-                        if 'downloaded_at' not in existing_entry: # Add if missing
-                            all_image_data[url]['downloaded_at'] = current_time_iso
-                        logger.info(f"Already downloaded and verified (re-check): {filename}")
+                        logger.info(f"File {existing_entry.get('filename', filename)} for URL {logger.truncate_url(url)} exists and content matches current download.")
+                        metadata_updated_this_cycle = False
+                        
+                        if existing_entry.get('hash') != image_hash:
+                            logger.warning(f"Updating stale hash for {existing_entry.get('filename', filename)}. Old: {existing_entry.get('hash')}, New: {image_hash}")
+                            existing_entry['hash'] = image_hash
+                            metadata_updated_this_cycle = True
+                        
+                        if not existing_entry.get('downloaded_at'): # Ensure downloaded_at is set
+                            existing_entry['downloaded_at'] = current_time_iso
+                            metadata_updated_this_cycle = True
+                        
+                        if metadata_updated_this_cycle:
+                            existing_entry['updated_at'] = current_time_iso
+                            cache['updated_at'] = current_time_iso # Mark the whole cache file as updated
+                            save_json_data(metadata_file, cache)
+                            logger.info(f"Metadata updated for {existing_entry.get('filename', filename)}.")
+                        
                         logger.update_progress(worker_id=self.worker_id)
                         continue 
 
+                # Proceed to save the file (either new or overwriting if stale/different)
                 with open(absolute_save_path, 'wb') as f:
                     f.write(content)
 
@@ -170,6 +186,7 @@ class ImageDownloader:
                     if os.path.exists(absolute_save_path):
                         os.remove(absolute_save_path)
                     raise Exception("File integrity verification failed after saving.")
+                
                 relative_image_path = os.path.relpath(absolute_save_path, self.base_output_dir).replace('\\', '/')
                 
                 all_image_data[url] = {
@@ -178,6 +195,7 @@ class ImageDownloader:
                     'hash': image_hash,
                     'relative_path': relative_image_path,
                     'downloaded_at': current_time_iso,
+                    'updated_at': current_time_iso,
                     'format': img_format,
                     'size': len(content),
                     'exif': exif_data,
@@ -206,13 +224,13 @@ class ImageDownloader:
         if saved_count > 0:
             logger.success(f"Downloaded {saved_count} new images for '{self.class_name}'.")
         elif num_to_download_in_batch > 0 : 
-             logger.warning(f"Attempted to download {num_to_download_in_batch} images for '{self.class_name}', but {saved_count} were saved.")
+            logger.warning(f"Attempted to download {num_to_download_in_batch} images for '{self.class_name}', but {saved_count} were saved (others may have been verified or failed).")
         else: 
             logger.warning(f"No new images were processed for '{self.class_name}'.")
         
         logger.info(f"Total in metadata for '{self.class_name}': {len(all_image_data)}")
         
-        cache['updated_at'] = datetime.now().isoformat()
+        cache['updated_at'] = datetime.now().isoformat() # Final update to overall cache timestamp
         save_json_data(metadata_file, cache)
         
         return saved_count
