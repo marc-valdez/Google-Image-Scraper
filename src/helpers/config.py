@@ -98,32 +98,67 @@ class ScraperConfig:
     def create_instance(cls, category_dir, search_term, **kwargs):
         """Factory method to create a config instance for a category.
         
-        Creates folder structure: output/category/search_term/
-        Example: output/Go/Sinangag/Sinangag_0.jpg
+        Creates folder structure: output/category/CleanBaseName/
+        Example: output/Go/ArrozCaldo/ArrozCaldo_0.jpg
+        The 'search_term' (e.g., "Arroz Caldo") is used to generate 'CleanBaseName' (e.g., "ArrozCaldo").
+        The original 'search_term' is stored as 'raw_search_key' for use in queries.
         """
-        # Create path: output/category/search_term/
-        image_path = os.path.join(os.getcwd(), "output", category_dir, search_term)
+        # Generate the clean base name for directory and file naming (e.g., "ArrozCaldo" from "Arroz Caldo")
+        # by simply removing spaces.
+        clean_base = search_term.replace(" ", "")
+        
+        # Create path: output/category/CleanBaseName/
+        image_path = os.path.join(os.getcwd(), "output", category_dir, clean_base)
+        
+        # The 'search_key' parameter for the constructor will be the original, potentially complex search term.
+        # This is stored in self.raw_search_key.
         return cls(image_path=image_path, search_key=search_term, **kwargs)
-    
+
+    @property
+    def clean_base_name(self):
+        """
+        Provides the 'class name' style base for filenames and directories,
+        e.g., "ArrozCaldo" from a raw_search_key of "Arroz Caldo".
+        This is derived from the raw_search_key (which is the original search_term).
+        """
+        return self.raw_search_key.replace(" ", "")
+
     @property
     def search_key_for_query(self):
         """Get the search key with any advanced suffix applied."""
         return f"{self.raw_search_key} {self.advanced_suffix}".strip()
 
+    # No longer need sanitized_query_key as the final cache file will use clean_base_name
+    # and store the original search_key_for_query internally.
+    # The download_checkpoint_file will also use clean_base_name.
+
     @property
     def cache_dir(self):
-        """Get the cache directory path for this scraper instance."""
-        return os.path.join(self.image_path, ".cache")
+        """Get the cache directory path for this scraper instance.
+        e.g., output/Category/ArrozCaldo/.cache/
+        """
+        # Ensure cache directory exists
+        cache_path = os.path.join(self.image_path, ".cache")
+        if not os.path.exists(cache_path):
+            os.makedirs(cache_path, exist_ok=True)
+            logger.info(f"Created cache directory: {cache_path}")
+        return cache_path
 
     def get_url_cache_file(self):
-        """Get the path to the URL cache file for this search key."""
-        return os.path.join(self.cache_dir, f"{self.raw_search_key}_urls.json")
+        """Get the path to the URL cache file for this search key.
+        e.g., output/Category/ArrozCaldo/.cache/ArrozCaldo_urls.json
+        """
+        return os.path.join(self.cache_dir, f"{self.clean_base_name}_urls.json")
 
     def get_url_checkpoint_file(self):
-        """Get the path to the URL checkpoint file for this search key."""
-        return os.path.join(self.cache_dir, f"{self.raw_search_key}_url_checkpoint.json")
+        """Get the path to the URL checkpoint file for this search key.
+        e.g., output/Category/ArrozCaldo/.cache/ArrozCaldo_url_checkpoint.json
+        """
+        return os.path.join(self.cache_dir, f"{self.clean_base_name}_url_checkpoint.json")
 
     def get_download_checkpoint_file(self):
-        """Get the path to the download checkpoint file for this search key."""
-        name = self.raw_search_key or "generic_download"
+        """Get the path to the download checkpoint file for this search key.
+        e.g., output/Category/ArrozCaldo/.cache/ArrozCaldo_download_checkpoint.json
+        """
+        name = self.clean_base_name or "generic_download"
         return os.path.join(self.cache_dir, f"{name}_download_checkpoint.json")

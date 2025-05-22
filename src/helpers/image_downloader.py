@@ -72,30 +72,33 @@ class ImageDownloader:
             logger.info("No image URLs provided to save")
             return 0
 
-        effective_search_key = self.config.search_key_for_query or "generic_download"
-        logger.start_progress(len(image_urls), f"Downloading images for '{effective_search_key}'")
-
-        start_index = 0
-        # Accessing the property here
-        download_checkpoint = load_json_data(self.download_checkpoint_file)
+        # Log the original search query the user sees/expects
+        logger.start_progress(len(image_urls), f"Downloading images for '{self.config.search_key_for_query}'")
+        download_checkpoint = load_json_data(self.download_checkpoint_file) or {}
         urls_hash = hash(tuple(sorted(image_urls)))
 
-        if download_checkpoint and \
-           download_checkpoint.get('search_key_ref') == effective_search_key and \
-           download_checkpoint.get('all_image_urls_hash') == urls_hash:
-           start_index = download_checkpoint.get('last_downloaded_index', -1) + 1
-           downloaded_previously_count = download_checkpoint.get('saved_count_so_far', 0)
-           logger.info(f"Resuming from index {start_index} ({downloaded_previously_count} already saved)")
+        # Initialize or get image cache
+        image_cache = download_checkpoint.get('image_cache', {})
+        
+        # Checkpoint uses the original search_key_for_query as the reference
+        if (download_checkpoint.get('search_key_ref') == self.config.search_key_for_query and
+            download_checkpoint.get('all_image_urls_hash') == urls_hash):
+            start_index = download_checkpoint.get('last_downloaded_index', -1) + 1
+            downloaded_previously_count = download_checkpoint.get('saved_count_so_far', 0)
+            logger.info(f"Resuming from index {start_index} ({downloaded_previously_count} already saved)")
         else:
-            # Accessing the property here
+            # Store the original search_key_for_query in the checkpoint for reference
             save_json_data(self.download_checkpoint_file, {
-                'search_key_ref': effective_search_key,
+                'search_key_ref': self.config.search_key_for_query,
                 'all_image_urls_hash': urls_hash,
                 'last_downloaded_index': -1,
                 'total_urls_to_download': len(image_urls),
-                'saved_count_so_far': 0
+                'saved_count_so_far': 0,
+                'image_cache': {}
             })
             downloaded_previously_count = 0
+            image_cache = {}
+            start_index = 0
             logger.info("Starting new download session")
 
 
@@ -103,8 +106,8 @@ class ImageDownloader:
         for indx in range(start_index, len(image_urls)):
             image_url = image_urls[indx]
             
-            filename_base_key = self.config.raw_search_key
-            search_string_for_filename = ''.join(e for e in filename_base_key if e.isalnum())
+            # Use the clean_base_name for image filenames, e.g., "ArrozCaldo"
+            search_string_for_filename = self.config.clean_base_name
 
 
             try:
@@ -150,19 +153,38 @@ class ImageDownloader:
 
                 save_path = os.path.join(self.config.image_path, filename)
 
+                # Check if URL exists in cache and file exists
+                cached_info = image_cache.get(image_url)
+                if cached_info and os.path.exists(cached_info['path']):
+                    try:
+                        with open(cached_info['path'], 'rb') as f:
+                            existing_content = f.read()
+                            existing_hash = hashlib.md5(existing_content).hexdigest()
+                            
+                        if existing_hash == cached_info['hash']:
+                            logger.info(f"File exists in cache, verified: {os.path.basename(cached_info['path'])}")
+                            logger.update_progress()
+                            current_total_saved = downloaded_previously_count + saved_count_this_session
+                            save_json_data(self.download_checkpoint_file, {
+                                'search_key_ref': self.config.search_key_for_query, # Store original query key
+                                'all_image_urls_hash': urls_hash,
+                                'last_downloaded_index': indx,
+                                'total_urls_to_download': len(image_urls),
+                                'saved_count_so_far': current_total_saved,
+                                'image_cache': image_cache
+                            })
+                            continue
+                    except Exception as e:
+                        logger.warning(f"Cache verification failed for {os.path.basename(cached_info['path'])}: {e}")
+                        # Continue to download new copy
+                
+                # Regular file existence check if not in cache
                 if os.path.exists(save_path):
-                    logger.info(f"File exists, skipping: {os.path.basename(save_path)}")
-                    logger.update_progress()
-                    current_total_saved = downloaded_previously_count + saved_count_this_session
-                    save_json_data(self.download_checkpoint_file, {
-                        'search_key_ref': effective_search_key,
-                        'all_image_urls_hash': urls_hash,
-                        'last_downloaded_index': indx,
-                        'total_urls_to_download': len(image_urls),
-                        'saved_count_so_far': current_total_saved
-                    })
-                    continue
+                    logger.info(f"File exists but not in cache, will verify: {os.path.basename(save_path)}")
 
+                # Calculate image hash before saving
+                image_hash = hashlib.md5(response.content).hexdigest()
+                
                 # Write content and verify integrity
                 with open(save_path, 'wb') as f:
                     f.write(response.content)
@@ -171,32 +193,53 @@ class ImageDownloader:
                     os.remove(save_path)
                     raise Exception("File integrity check failed")
                 
+                # Update image cache with successful download
+                image_cache[image_url] = {
+                    'filename': filename,
+                    'hash': image_hash,
+                    'path': save_path,
+                    'format': image_format,
+                    'size': len(response.content),
+                    'download_time': time.time()
+                }
+                
                 logger.info(f"Saved: {os.path.basename(save_path)}")
                 saved_count_this_session += 1
                 logger.update_progress()
 
                 current_total_saved = downloaded_previously_count + saved_count_this_session
                 save_json_data(self.download_checkpoint_file, {
-                    'search_key_ref': effective_search_key,
+                    'search_key_ref': self.config.search_key_for_query, # Store original query key
                     'all_image_urls_hash': urls_hash,
                     'last_downloaded_index': indx,
                     'total_urls_to_download': len(image_urls),
-                    'saved_count_so_far': current_total_saved
+                    'saved_count_so_far': current_total_saved,
+                    'image_cache': image_cache
                 })
 
             except requests.exceptions.RequestException as e:
                 logger.error(f"Network error downloading image {indx+1}: {e}")
+                # Remove from cache if network error to allow retry
+                if image_url in image_cache:
+                    del image_cache[image_url]
             except Image.UnidentifiedImageError:
                 logger.error(f"Invalid or corrupt image data from {logger.truncate_url(image_url)}")
+                # Remove from cache if corrupt
+                if image_url in image_cache:
+                    del image_cache[image_url]
             except Exception as e:
                 logger.error(f"Failed to save image {indx+1}: {e}")
+                # Remove from cache on general failure
+                if image_url in image_cache:
+                    del image_cache[image_url]
                 current_total_saved = downloaded_previously_count + saved_count_this_session
                 save_json_data(self.download_checkpoint_file, {
-                    'search_key_ref': effective_search_key,
+                    'search_key_ref': self.config.search_key_for_query, # Store original query key
                     'all_image_urls_hash': urls_hash,
                     'last_downloaded_index': indx,
                     'total_urls_to_download': len(image_urls),
-                    'saved_count_so_far': current_total_saved
+                    'saved_count_so_far': current_total_saved,
+                    'image_cache': image_cache
                 })
 
         total_saved_overall = downloaded_previously_count + saved_count_this_session
@@ -209,8 +252,16 @@ class ImageDownloader:
 
         final_checkpoint_data = load_json_data(self.download_checkpoint_file)
         if final_checkpoint_data and final_checkpoint_data.get('last_downloaded_index', -1) == len(image_urls) - 1:
+            cache_filename_base = self.config.clean_base_name or "generic_cache"
+            cache_file = os.path.join(self.config.image_path, f"{cache_filename_base}.json")
+            
+            save_json_data(cache_file, {
+                'search_key': self.config.search_key_for_query,
+                'download_completed': time.time(),
+                'image_cache': image_cache
+            })
             remove_file_if_exists(self.download_checkpoint_file)
-            logger.info("Download checkpoint cleared")
+            logger.info(f"Download complete - Cache saved to {os.path.basename(cache_file)}")
         else:
             logger.warning("Download may be incomplete - checkpoint retained")
 
