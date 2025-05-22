@@ -1,13 +1,8 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Sun May 23 14:44:43 2021
-
-@author: Yicong
-"""
 #!/usr/bin/env python3
 from selenium import webdriver
 from selenium.webdriver.common.keys import Keys
 from selenium.common.exceptions import WebDriverException, SessionNotCreatedException
+from logger import logger
 import sys
 import os
 import urllib.request
@@ -66,7 +61,7 @@ def download_lastest_chromedriver(current_chrome_version=""):
                 driver_url = download["url"]
         
         # Download the file.
-        print('[INFO] downloading chromedriver ver: %s: %s'% (current_chrome_version, driver_url))
+        logger.info(f"Downloading chromedriver version {current_chrome_version} from {logger.truncate_url(driver_url)}")
         file_name = driver_url.split("/")[-1]
         app_path = os.getcwd()
         chromedriver_path = os.path.normpath(os.path.join(app_path, 'webdriver', webdriver_executable()))
@@ -90,12 +85,12 @@ def download_lastest_chromedriver(current_chrome_version=""):
             
         st = os.stat(chromedriver_path)
         os.chmod(chromedriver_path, st.st_mode | stat.S_IEXEC)
-        print('[INFO] lastest chromedriver downloaded')
+        logger.success("ChromeDriver downloaded successfully")
         # Cleanup.
         os.remove(file_path)
         result = True
     except Exception as e:
-        print(e)
-        print("[WARN] unable to download lastest chromedriver. the system will use the local version instead.")
+        logger.error(str(e))
+        logger.warning("Failed to download ChromeDriver - will use existing version if available")
     
     return result

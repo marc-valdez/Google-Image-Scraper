@@ -206,7 +206,7 @@ class UrlFetcher:
                                     break
                             except NoSuchElementException: continue
                             except Exception as e_button:
-                                print(f"[WARN] Error with load more button ({selector_value}): {e_button}")
+                                logger.warning(f"Failed to click load more button ({selector_value}): {e_button}")
                     except Exception as e_load_more:
                         pass
 

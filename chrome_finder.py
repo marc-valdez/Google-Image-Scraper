@@ -1,6 +1,7 @@
 import os
 import platform
 import shutil
+from logger import logger
 
 class ChromeFinder:
     """
@@ -103,14 +104,14 @@ class ChromeFinder:
                 exec_name, description = item
                 found_path = shutil.which(exec_name)
                 if found_path and os.path.isfile(found_path):
-                    print(f"[CHROME_FINDER_INFO] Found Chrome via {description}: {found_path}")
+                    logger.info(f"Found Chrome via {description}")
                     return found_path
             elif isinstance(item, str): # Direct path
                 if os.path.isfile(item):
-                    print(f"[CHROME_FINDER_INFO] Found Chrome at direct path: {item}")
+                    logger.info(f"Found Chrome at {item}")
                     return item
         
-        print("[CHROME_FINDER_WARN] No suitable Chrome/Chromium installation found in common locations or PATH.")
+        logger.warning("No Chrome installation found in common locations")
         return None
 
 if __name__ == '__main__':
@@ -118,6 +119,6 @@ if __name__ == '__main__':
     finder = ChromeFinder()
     chrome_exe_path = finder.get_chrome_path()
     if chrome_exe_path:
-        print(f"Chrome executable found: {chrome_exe_path}")
+        logger.success(f"Chrome found at: {chrome_exe_path}")
     else:
-        print("Chrome executable not found.")
+        logger.error("Chrome not found")

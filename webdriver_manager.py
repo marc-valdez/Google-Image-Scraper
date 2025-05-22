@@ -6,6 +6,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 import patch
+from logger import logger
 
 class WebDriverManager:
     def __init__(self, config):
@@ -32,13 +33,13 @@ class WebDriverManager:
                 f"The configured Chrome browser binary path does not exist or is not a file: '{self.config.chrome_binary_path}'. "
                 "Please check the path in ScraperConfig."
             )
-        print(f"[INFO] Using Chrome browser binary at: {self.config.chrome_binary_path}")
+        logger.info(f"Using Chrome browser at: {self.config.chrome_binary_path}")
 
         # 2. Handle ChromeDriver (chromedriver.exe)
         #    It's expected to be at self.config.webdriver_path (e.g., ./webdriver/chromedriver.exe)
         if not os.path.isfile(self.config.webdriver_path):
-            print(f"[INFO] ChromeDriver executable not found at the configured path: {self.config.webdriver_path}.")
-            print(f"[INFO] Attempting to download/patch ChromeDriver suitable for Chrome at '{self.config.chrome_binary_path}'.")
+            logger.info(f"ChromeDriver not found at: {self.config.webdriver_path}")
+            logger.info("Attempting to download compatible ChromeDriver")
             
             # Assuming patch.py's download_lastest_chromedriver can take chrome_exe_path
             # to determine the correct browser version for which to download chromedriver.
@@ -49,9 +50,9 @@ class WebDriverManager:
                     f"ChromeDriver auto-patching/download failed. Attempted to place/update at '{self.config.webdriver_path}'. "
                     "Ensure the target directory is writable, check network connectivity, and that a suitable ChromeDriver exists for your Chrome version."
                 )
-            print(f"[INFO] ChromeDriver patched/downloaded to: {self.config.webdriver_path}")
+            logger.success(f"ChromeDriver installed at: {self.config.webdriver_path}")
         else:
-            print(f"[INFO] Found existing ChromeDriver at: {self.config.webdriver_path}")
+            logger.info(f"Found existing ChromeDriver: {self.config.webdriver_path}")
 
 
         # 3. Attempt to initialize WebDriver (with retries for version mismatch patching if an existing chromedriver was found but is wrong)
@@ -61,27 +62,37 @@ class WebDriverManager:
                 # Crucially, set the binary_location for Selenium to use the correct Chrome browser
                 options.binary_location = self.config.chrome_binary_path
                 
+                # Suppress Chrome logging
+                options.add_experimental_option('excludeSwitches', ['enable-logging'])
+                options.add_argument('--log-level=3')  # Only show fatal errors
+                options.add_argument('--silent')
+                
                 if self.config.headless:
                     options.add_argument('--headless')
                 
-                print(f"[INFO] Attempting to launch WebDriver (attempt {attempt + 1})...")
-                print(f"       Using ChromeDriver: {self.config.webdriver_path}")
-                print(f"       Targeting Chrome Browser: {options.binary_location}")
+                logger.info(f"Initializing WebDriver (attempt {attempt + 1})")
+                logger.info(f"ChromeDriver: {self.config.webdriver_path}")
+                logger.info(f"Chrome Browser: {options.binary_location}")
 
-                current_driver = webdriver.Chrome(executable_path=self.config.webdriver_path, options=options)
+                # Suppress ChromeDriver logging
+                current_driver = webdriver.Chrome(
+                    executable_path=self.config.webdriver_path,
+                    options=options,
+                    service_log_path=os.devnull
+                )
                 current_driver.set_window_size(1400, 1050) # Consider making this configurable
                 current_driver.get("https://www.google.com") # To accept cookies etc.
 
                 try: # Handle cookie consent dialog
                     WebDriverWait(current_driver, 5).until(EC.element_to_be_clickable((By.ID, "W0wltc"))).click()
                 except Exception as e_cookie:
-                    print(f"[INFO] Cookie consent dialog not found/clickable on google.com: {e_cookie}")
+                    logger.info("No cookie consent dialog found")
                 
                 self.driver = current_driver
-                print("[INFO] WebDriver initialized successfully by WebDriverManager.")
+                logger.info("WebDriver initialized successfully")
                 return # Successfully initialized self.driver
             except Exception as e:
-                print(f"[WARN] Error initializing WebDriver (attempt {attempt + 1}): {e}")
+                logger.warning(f"WebDriver initialization failed (attempt {attempt + 1}): {e}")
                 if attempt == 0: # Only try specific version patching on the first Selenium instantiation failure
                     # This error often indicates a ChromeDriver/Chrome browser version mismatch.
                     # Try to extract the required Chrome browser version from the error message if possible.
@@ -89,15 +100,15 @@ class WebDriverManager:
                     match = re.search(r"This version of ChromeDriver only supports Chrome version (\d+)", str(e), re.IGNORECASE)
                     if match:
                         version_hint_from_error = match.group(1) # e.g., "114"
-                        print(f"[INFO] Error suggests ChromeDriver supports Chrome version {version_hint_from_error}.")
-                    
-                    print(f"[INFO] Attempting to re-patch ChromeDriver. This will try to match Chrome at '{self.config.chrome_binary_path}' or use hint '{version_hint_from_error}'.")
+                        logger.info(f"ChromeDriver supports Chrome version {version_hint_from_error}")
+                     
+                    logger.info(f"Re-patching ChromeDriver to match Chrome version")
                     # Pass chrome_exe_path for primary version detection, and version_hint_from_error as a secondary hint.
                     if patch.download_lastest_chromedriver(chrome_exe_path=self.config.chrome_binary_path, required_version=version_hint_from_error):
-                        print("[INFO] ChromeDriver re-patched after error, retrying WebDriver initialization...")
+                        logger.info("ChromeDriver re-patched successfully - retrying")
                         continue # Retry the loop with the (hopefully) corrected ChromeDriver
                     else:
-                        print("[WARN] ChromeDriver re-patch attempt after error failed. Will not retry patch.")
+                        logger.warning("ChromeDriver re-patch failed")
                         break # Break from retry loop if re-patch fails
                 # If it's the second attempt (attempt == 1) and it failed, or if re-patch failed on first attempt, we fall through.
         
@@ -123,10 +134,10 @@ class WebDriverManager:
         if self.driver:
             try:
                 self.driver.quit()
-                print("[INFO] WebDriver closed by WebDriverManager.")
+                logger.info("WebDriver closed")
             except Exception as e:
-                print(f"[WARN] Error quitting WebDriver in WebDriverManager: {e}")
+                logger.warning(f"Error closing WebDriver: {e}")
             finally:
                 self.driver = None
         else:
-            print("[INFO] No active WebDriver instance to close in WebDriverManager.")
+            logger.info("No active WebDriver to close")

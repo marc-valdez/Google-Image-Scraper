@@ -1,5 +1,6 @@
 import os
 from chrome_finder import ChromeFinder
+from logger import logger
 
 class ScraperConfig:
     """Configuration for the Google Image Scraper.
@@ -17,12 +18,12 @@ class ScraperConfig:
             driver_dir = os.path.dirname(webdriver_path)
             if os.path.isdir(driver_dir):
                 return webdriver_path
-            print(f"[CONFIG_WARN] Webdriver directory '{driver_dir}' not found. Using default: {default_path}")
+            logger.warning(f"Webdriver directory not found, using default: {default_path}")
 
         # Ensure default directory exists
         if not os.path.exists(default_dir):
             os.makedirs(default_dir, exist_ok=True)
-            print(f"[CONFIG_INFO] Created webdriver directory: {default_dir}")
+            logger.info(f"Created webdriver directory: {default_dir}")
 
         return default_path
 
@@ -56,7 +57,7 @@ class ScraperConfig:
         # Create output directory if needed
         if not os.path.exists(self.image_path):
             os.makedirs(self.image_path, exist_ok=True)
-            print(f"[CONFIG_INFO] Created directory: {self.image_path}")
+            logger.info(f"Created directory: {self.image_path}")
             
         # Optional parameters with defaults
         self.number_of_images = number_of_images
@@ -88,9 +89,9 @@ class ScraperConfig:
             finder = ChromeFinder()
             self.chrome_binary_path = finder.get_chrome_path()
             if self.chrome_binary_path:
-                print(f"[CONFIG_INFO] Auto-detected Chrome path: {self.chrome_binary_path}")
+                logger.info(f"Auto-detected Chrome at: {self.chrome_binary_path}")
             else:
-                print("[CONFIG_WARN] Could not auto-detect Chrome path. WebDriverManager may fail if Chrome is not in PATH.")
+                logger.warning("Could not detect Chrome path - ensure Chrome is installed")
                 self.chrome_binary_path = None
 
     @classmethod

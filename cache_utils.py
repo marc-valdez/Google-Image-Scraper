@@ -1,5 +1,6 @@
 import os
 import json
+from logger import logger
 
 def ensure_cache_dir(cache_path):
     """Ensures that the cache directory exists."""
@@ -7,7 +8,7 @@ def ensure_cache_dir(cache_path):
         os.makedirs(cache_path, exist_ok=True)
         # print(f"[DEBUG] Ensured cache directory exists: {cache_path}")
     except Exception as e:
-        print(f"[ERROR] Could not create cache directory {cache_path}: {e}")
+        logger.error(f"Could not create cache directory {cache_path}: {e}")
         raise
 
 def load_json_data(file_path):
@@ -27,12 +28,12 @@ def load_json_data(file_path):
         # print(f"[DEBUG] FileNotFoundError (should have been caught by os.path.exists): {file_path}")
         return None
     except json.JSONDecodeError as e:
-        print(f"[WARN] Invalid JSON in file {file_path}: {e}. Returning None.")
+        logger.warning(f"Invalid JSON in file {file_path}: {e}")
         # Optionally, could delete or rename the corrupted file here
         # os.rename(file_path, file_path + ".corrupted")
         return None
     except Exception as e:
-        print(f"[ERROR] Could not load JSON from {file_path}: {e}")
+        logger.error(f"Could not load JSON from {file_path}: {e}")
         return None
 
 def save_json_data(file_path, data):
@@ -49,7 +50,7 @@ def save_json_data(file_path, data):
         # print(f"[DEBUG] Successfully saved JSON to: {file_path}")
         return True
     except Exception as e:
-        print(f"[ERROR] Could not save JSON to {file_path}: {e}")
+        logger.error(f"Could not save JSON to {file_path}: {e}")
         return False
 
 def remove_file_if_exists(file_path):
@@ -63,5 +64,5 @@ def remove_file_if_exists(file_path):
         # print(f"[DEBUG] File not found, no removal needed: {file_path}")
         return False # Or True, depending on desired semantics (True if state is "file does not exist")
     except Exception as e:
-        print(f"[ERROR] Could not remove file {file_path}: {e}")
+        logger.error(f"Could not remove file {file_path}: {e}")
         return False
