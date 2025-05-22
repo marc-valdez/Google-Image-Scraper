@@ -146,7 +146,7 @@ class UrlFetcher:
                             btn.click()
                             time.sleep(3)
                     except NoSuchElementException:
-                        logger.debug(f"[Worker {self.worker_id}] 'Show more results' button (mye4qd) not found.")
+                        logger.error(f"[Worker {self.worker_id}] 'Show more results' button (mye4qd) not found.")
                     except Exception as e_sm:
                         logger.warning(f"[Worker {self.worker_id}] Error clicking 'Show more results': {e_sm}")
             

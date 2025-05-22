@@ -68,7 +68,7 @@ def is_cache_complete(category_dir: str, class_name: str):
 
         urls_found = url_data.get('urls', [])
         if not isinstance(urls_found, list) or len(urls_found) < cfg.NUM_IMAGES_PER_CLASS:
-            logger.error(f"Cache not complete for '{class_name}' in '{category_dir}': Not enough URLs in cache ({len(urls_found)}/{cfg.NUM_IMAGES_PER_CLASS}).")
+            logger.warning(f"Cache not complete for '{class_name}' in '{category_dir}': Not enough URLs in cache ({len(urls_found)}/{cfg.NUM_IMAGES_PER_CLASS}).")
             return False
 
         images_in_metadata = image_metadata.get('image_cache', {})

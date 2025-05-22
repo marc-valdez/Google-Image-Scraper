@@ -89,15 +89,22 @@ class ImageDownloader:
 
         if not urls_to_download:
             logger.info(f"All {len(image_urls)} images already downloaded and verified for '{self.class_name}'.")
-            cache['updated_at'] = datetime.now().isoformat()
             if 'class_name' not in cache: 
                  cache['class_name'] = self.class_name
+            if 'created_at' not in cache:
+                cache['created_at'] = datetime.now().isoformat()
+            cache['updated_at'] = datetime.now().isoformat()
             save_json_data(metadata_file, cache)
             return 0
         
         num_to_download_in_batch = len(urls_to_download)
         logger.start_progress(num_to_download_in_batch, f"Downloading images for '{self.class_name}'", self.worker_id)
         saved_count = 0
+
+        if 'class_name' not in cache: 
+            cache['class_name'] = self.class_name
+        if 'created_at' not in cache:
+            cache['created_at'] = datetime.now().isoformat()
 
         for idx, url in enumerate(urls_to_download):
             self.rate_limiter.wait()
@@ -113,16 +120,28 @@ class ImageDownloader:
                 response = self.session.get(url, headers=headers, timeout=cfg.CONNECTION_TIMEOUT)
                 response.raise_for_status()
                 content = response.content
+                
+                original_filename_from_url = os.path.basename(urlparse(url).path)
+                exif_data = {}
 
                 try:
                     with Image.open(io.BytesIO(content)) as img:
                         img_format = img.format.lower() if img.format else 'jpg'
+                        exif_data['width'] = img.width
+                        exif_data['height'] = img.height
+                        exif_data['mode'] = img.mode
+                        if hasattr(img, '_getexif'):
+                            exif = img._getexif()
+                            if exif:
+                                for k, v in exif.items():
+                                    if k in Image.TAGS:
+                                        exif_data[Image.TAGS[k]] = v if isinstance(v, (str, int, float, bool)) else str(v)
                 except Exception:
                     ext = os.path.splitext(urlparse(url).path)[1][1:].lower()
                     img_format = ext if ext in ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'tiff'] else 'jpg'
 
                 if keep_filenames:
-                    base_from_url = os.path.splitext(os.path.basename(urlparse(url).path))[0]
+                    base_from_url = os.path.splitext(original_filename_from_url)[0]
                     file_base_name = base_from_url or f"{self.clean_base}_{len(all_image_data)+1:03d}"
                 else:
                     file_base_name = f"{self.clean_base}_{len(all_image_data)+1:03d}"
@@ -131,10 +150,15 @@ class ImageDownloader:
                 absolute_save_path = os.path.join(self.image_path, filename)
 
                 image_hash = hashlib.md5(content).hexdigest()
+                current_time_iso = datetime.now().isoformat()
+
                 if url in all_image_data:
                     existing_entry = all_image_data[url]
                     existing_abs_path = self._get_absolute_path_from_metadata(existing_entry)
                     if existing_abs_path and os.path.exists(existing_abs_path) and verify_image_file(existing_abs_path, image_hash):
+                        # Update timestamp if file is re-verified, though it's already downloaded
+                        if 'downloaded_at' not in existing_entry: # Add if missing
+                            all_image_data[url]['downloaded_at'] = current_time_iso
                         logger.info(f"Already downloaded and verified (re-check): {filename}")
                         logger.update_progress(worker_id=self.worker_id)
                         continue 
@@ -150,17 +174,18 @@ class ImageDownloader:
                 
                 all_image_data[url] = {
                     'filename': filename,
+                    'original_filename': original_filename_from_url,
                     'hash': image_hash,
                     'relative_path': relative_image_path,
+                    'downloaded_at': current_time_iso,
                     'format': img_format,
-                    'size': len(content)
+                    'size': len(content),
+                    'exif': exif_data,
                 }
 
                 cache.update({
                     'image_cache': all_image_data,
-                    'class_name': self.class_name,
-                    'created_at': datetime.now().isoformat(),
-                    'updated_at': datetime.now().isoformat()
+                    'updated_at': current_time_iso
                 })
                 save_json_data(metadata_file, cache)
                 logger.info(f"Saved: {filename}")
@@ -188,10 +213,6 @@ class ImageDownloader:
         logger.info(f"Total in metadata for '{self.class_name}': {len(all_image_data)}")
         
         cache['updated_at'] = datetime.now().isoformat()
-        if saved_count > 0 or num_to_download_in_batch > 0 : 
-            cache['created_at'] = datetime.now().isoformat()
-        if 'class_name' not in cache: 
-            cache['class_name'] = self.class_name
         save_json_data(metadata_file, cache)
         
         return saved_count
