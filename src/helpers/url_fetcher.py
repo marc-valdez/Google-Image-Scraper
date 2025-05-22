@@ -82,12 +82,14 @@ class UrlFetcher:
             logger.error(f"[Worker {self.worker_id}] WebDriver error on initial page load: {e}. URL: {self.search_url}")
             return found_urls
 
-        needed_urls = self.target_images - len(found_urls)
-        if needed_urls <= 0:
-             logger.info(f"[Worker {self.worker_id}] All required images already found.")
+        needed_urls = self.target_images - len(found_urls) # Keep this for logging if needed, but progress bar uses target_images
+        if needed_urls <= 0 and len(found_urls) >= self.target_images : # Check if we already have enough from cache
+             logger.info(f"[Worker {self.worker_id}] All {self.target_images} required images already found in cache.")
              return found_urls[:self.target_images]
 
-        logger.start_progress(needed_urls, f"Finding images for '{self.query}'", self.worker_id)
+        logger.start_progress(self.target_images, f"Finding images for '{self.query}'", self.worker_id)
+        if len(found_urls) > 0: # If we loaded some URLs from cache, update the progress bar
+            logger.update_progress(advance=len(found_urls), worker_id=self.worker_id)
         
         high_res_image_selectors = ["n3VNCb", "iPVvYb", "r48jcc", "pT0Scc", "H8Rx8c"]
 
@@ -157,7 +159,7 @@ class UrlFetcher:
                         if src and "http" in src and "encrypted" not in src and src not in found_urls:
                             found_urls.append(src)
                             logger.info(f"[Worker {self.worker_id}] Image {len(found_urls)}/{self.target_images}: {logger.truncate_url(src)}")
-                            logger.update_progress(worker_id=self.worker_id)
+                            logger.update_progress(worker_id=self.worker_id) # Advances by 1 by default
                             
                             save_json_data(self.cache_file_path, {
                                 'search_url_used': self.search_url, 
