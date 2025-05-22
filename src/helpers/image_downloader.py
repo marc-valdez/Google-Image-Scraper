@@ -10,7 +10,7 @@ import requests
 
 from src.logging.logger import logger
 from src.utils.cache_utils import load_json_data, save_json_data
-from src.helpers import config as cfg
+import config as cfg
 
 class RateLimiter:
     def __init__(self):

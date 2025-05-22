@@ -8,7 +8,7 @@ from selenium.common.exceptions import (
 from src.environment.webdriver import WebDriverManager
 from src.logging.logger import logger
 from src.utils.cache_utils import load_json_data, save_json_data
-from src.helpers import config as cfg
+import config as cfg
 import time
 import random
 import urllib.parse

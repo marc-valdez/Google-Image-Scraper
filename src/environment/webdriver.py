@@ -8,7 +8,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service as ChromeService
 from src.logging.logger import logger
 from src.environment import patch
-from src.helpers import config as cfg
+import config as cfg
 
 class WebDriverManager:
     def __init__(self):

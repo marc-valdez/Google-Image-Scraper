@@ -1,6 +1,6 @@
 import os
 from src.utils.cache_utils import ensure_cache_dir, is_cache_complete
-from src.helpers import config as cfg
+import config as cfg
 from src.helpers.url_fetcher import UrlFetcher
 from src.helpers.image_downloader import ImageDownloader
 from src.logging.logger import logger

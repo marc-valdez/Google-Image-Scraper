@@ -2,7 +2,7 @@ import os
 import json
 import hashlib
 from src.logging.logger import logger
-from src.helpers import config as cfg
+import config as cfg
 
 def ensure_cache_dir(cache_path):
     try:

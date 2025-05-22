@@ -6,7 +6,7 @@ from src.GoogleImageScraper import GoogleImageScraper
 from src.logging.logger import logger
 
 from src.environment.manager import EnvironmentResolver
-from src.helpers import config as cfg
+import config as cfg
 
 cfg.CHROME_BINARY_PATH = EnvironmentResolver.auto_detect_chrome()
 cfg.WEBDRIVER_PATH = EnvironmentResolver.resolve_webdriver_path()
