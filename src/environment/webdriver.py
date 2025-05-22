@@ -1,5 +1,6 @@
 import os
 import re
+import random
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
@@ -14,7 +15,7 @@ class WebDriverManager:
     def __init__(self, existing_driver=None):
         self.driver = existing_driver
         # self.managed_driver is True if this instance is responsible for creating and quitting the driver.
-        self.managed_driver = False 
+        self.managed_driver = False
 
         if self.driver:
             logger.info("WebDriverManager is using an existing WebDriver instance.")
@@ -34,13 +35,13 @@ class WebDriverManager:
         if not cfg.WEBDRIVER_PATH or not os.path.isfile(cfg.WEBDRIVER_PATH):
             original_webdriver_path_cfg = cfg.WEBDRIVER_PATH # Store for logging/error messages
             logger.info(f"ChromeDriver not found at configured path: {original_webdriver_path_cfg}. Attempting download.")
-            
+
             if not patch.download_lastest_chromedriver(chrome_path=cfg.CHROME_BINARY_PATH):
                 raise RuntimeError(
                     f"ChromeDriver auto-patching/download failed. Attempted for path: '{original_webdriver_path_cfg}'. "
                     "Check permissions, network, and Chrome/ChromeDriver compatibility."
                 )
-            
+
             # After patching, patch.py should ideally update cfg.WEBDRIVER_PATH or return the new path.
             # If not, we construct an expected path.
             expected_path_after_patch = os.path.join(os.getcwd(), "webdriver", patch.webdriver_executable())
@@ -53,30 +54,35 @@ class WebDriverManager:
             logger.info(f"Found existing ChromeDriver: {cfg.WEBDRIVER_PATH}")
 
         # Attempt to initialize WebDriver, with one retry if the first attempt fails due to version mismatch.
-        for attempt in range(2): 
+        for attempt in range(2):
             try:
                 options = Options()
                 options.binary_location = cfg.CHROME_BINARY_PATH
-                
+
+                if cfg.ROTATE_USER_AGENT and cfg.USER_AGENTS:
+                    user_agent = random.choice(cfg.USER_AGENTS)
+                    options.add_argument(f"user-agent={user_agent}")
+                    logger.info(f"Using User-Agent: {user_agent}")
+
                 options.add_experimental_option('excludeSwitches', ['enable-logging'])
                 options.add_argument('--log-level=3')
-                options.add_argument('--silent') 
-                options.add_argument('--disable-logging') 
+                options.add_argument('--silent')
+                options.add_argument('--disable-logging')
                 options.add_argument('--disable-dev-shm-usage')
                 options.add_argument('--disable-gpu')
                 options.add_argument('--no-sandbox')
                 options.add_argument('--disable-extensions')
                 options.add_argument('--disable-software-rasterizer')
                 options.add_experimental_option('prefs', {
-                    'enable_media_stream': False, 
-                    'enable_logging': False,      
-                    'profile.default_content_settings.media_stream_mic': 2,  
-                    'profile.default_content_settings.media_stream_camera': 2 
+                    'enable_media_stream': False,
+                    'enable_logging': False,
+                    'profile.default_content_settings.media_stream_mic': 2,
+                    'profile.default_content_settings.media_stream_camera': 2
                 })
-                
+
                 if cfg.HEADLESS_MODE:
                     options.add_argument('--headless')
-                
+
                 logger.info(f"Initializing WebDriver (attempt {attempt + 1}) with ChromeDriver: {cfg.WEBDRIVER_PATH}")
 
                 service = ChromeService(
@@ -92,10 +98,10 @@ class WebDriverManager:
                     WebDriverWait(current_driver, 5).until(EC.element_to_be_clickable((By.ID, "W0wltc"))).click()
                 except Exception:
                     logger.info("No cookie consent dialog found or interaction failed (this is often OK).")
-                
+
                 self.driver = current_driver
                 logger.info("WebDriver initialized successfully")
-                return 
+                return
             except Exception as e:
                 logger.warning(f"WebDriver initialization failed (attempt {attempt + 1}): {e}")
                 if attempt == 0: # Only re-patch on the first failed attempt
@@ -104,7 +110,7 @@ class WebDriverManager:
                     if match:
                         version_hint_from_error = match.group(1)
                         logger.info(f"Error suggests ChromeDriver needs Chrome version {version_hint_from_error}")
-                     
+
                     logger.info(f"Attempting to re-patch ChromeDriver (target version hint: {version_hint_from_error or 'latest'})")
                     if patch.download_lastest_chromedriver(
                         chrome_path=cfg.CHROME_BINARY_PATH,
@@ -115,11 +121,11 @@ class WebDriverManager:
                         if os.path.isfile(expected_path_after_repatch):
                             cfg.WEBDRIVER_PATH = expected_path_after_repatch
                         logger.info("ChromeDriver re-patched. Retrying WebDriver initialization.")
-                        continue 
+                        continue
                     else:
                         logger.warning("ChromeDriver re-patch failed. Further attempts may also fail.")
                         break # Stop if re-patch itself fails
-        
+
         raise RuntimeError(
             f"Failed to initialize WebDriver after all attempts. Last tried ChromeDriver: '{cfg.WEBDRIVER_PATH}'. "
             "Check Chrome/ChromeDriver compatibility, paths, and permissions."
@@ -131,13 +137,13 @@ class WebDriverManager:
         try:
             _ = self.driver.current_url # A simple check to see if the driver session is responsive
             return True
-        except Exception: 
+        except Exception:
             return False
 
     def close_driver(self):
         # Only quit the driver if this WebDriverManager instance created it.
         # If an existing_driver was passed in, this instance does not own it.
-        if self.managed_driver and self.driver: 
+        if self.managed_driver and self.driver:
             try:
                 self.driver.quit()
                 logger.info("WebDriver instance (managed by this manager) has been closed.")
