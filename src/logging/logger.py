@@ -50,7 +50,7 @@ class ImageScraperLogger:
             self.console.print(self._format_message(f"ℹ️ {message}"), style="info")
             
     def warning(self, message: str):
-        self.console.print(self._format_message(f"⚠️ {message}"), style="warning")
+        self.console.print(self._format_message(f"⚠️  {message}"), style="warning")
         
     def error(self, message: str):
         self.console.print(self._format_message(f"❌ {message}"), style="error")
