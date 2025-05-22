@@ -72,46 +72,50 @@ class ImageDownloader:
             logger.info("No image URLs provided to save")
             return 0
 
-        # Log the original search query the user sees/expects
         logger.start_progress(len(image_urls), f"Downloading images for '{self.config.search_key_for_query}'")
-        download_checkpoint = load_json_data(self.download_checkpoint_file) or {}
-        urls_hash = hash(tuple(sorted(image_urls)))
 
-        # Initialize or get image cache
-        image_cache = download_checkpoint.get('image_cache', {})
+        # Get the path for the ClassName_metadata.json file from config (now in .cache dir)
+        metadata_file = self.config.get_image_metadata_file()
         
-        # Checkpoint uses the original search_key_for_query as the reference
-        if (download_checkpoint.get('search_key_ref') == self.config.search_key_for_query and
-            download_checkpoint.get('all_image_urls_hash') == urls_hash):
-            start_index = download_checkpoint.get('last_downloaded_index', -1) + 1
-            downloaded_previously_count = download_checkpoint.get('saved_count_so_far', 0)
-            logger.info(f"Resuming from index {start_index} ({downloaded_previously_count} already saved)")
+        loaded_metadata = load_json_data(metadata_file) or {}
+        if 'image_cache' not in loaded_metadata:
+            loaded_metadata['image_cache'] = {}
+        
+        all_image_data = loaded_metadata.get('image_cache', {})
+
+        all_urls_verified = True
+        if image_urls:
+            for url_to_check in image_urls:
+                cached_entry = all_image_data.get(url_to_check)
+                if not cached_entry or not os.path.exists(cached_entry.get('path', '')):
+                    all_urls_verified = False
+                    break
+                try:
+                    with open(cached_entry['path'], 'rb') as f_verify:
+                        content = f_verify.read()
+                    if hashlib.md5(content).hexdigest() != cached_entry.get('hash', ''):
+                        all_urls_verified = False
+                        break
+                except Exception:
+                    all_urls_verified = False
+                    break
         else:
-            # Store the original search_key_for_query in the checkpoint for reference
-            save_json_data(self.download_checkpoint_file, {
-                'search_key_ref': self.config.search_key_for_query,
-                'all_image_urls_hash': urls_hash,
-                'last_downloaded_index': -1,
-                'total_urls_to_download': len(image_urls),
-                'saved_count_so_far': 0,
-                'image_cache': {}
-            })
-            downloaded_previously_count = 0
-            image_cache = {}
-            start_index = 0
-            logger.info("Starting new download session")
+            all_urls_verified = True
 
 
-        saved_count_this_session = 0
-        for indx in range(start_index, len(image_urls)):
+        if all_urls_verified and image_urls:
+            logger.info(f"All {len(image_urls)} provided URLs for '{self.config.search_key_for_query}' are already downloaded and verified.")
+            logger.complete_progress()
+            return 0
+
+        newly_saved_count = 0
+        
+        for indx, image_url in enumerate(image_urls):
             image_url = image_urls[indx]
-            
-            # Use the clean_base_name for image filenames, e.g., "ArrozCaldo"
-            search_string_for_filename = self.config.clean_base_name
-
+            img_basename_for_file = self.config.clean_base_name
 
             try:
-                self.rate_limiter.wait()  # Rate limit requests
+                self.rate_limiter.wait()
                 
                 logger.info(f"Downloading {indx+1}/{len(image_urls)}: {logger.truncate_url(image_url)}")
                 headers = {
@@ -123,7 +127,6 @@ class ImageDownloader:
                     "Referer": image_url
                 }
                 
-                # Use session for connection pooling and automatic retries
                 response = self.session.get(image_url, headers=headers, timeout=15)
                 if response.status_code != 200:
                     raise Exception(f"HTTP Status code: {response.status_code}")
@@ -131,61 +134,43 @@ class ImageDownloader:
                 try:
                     with Image.open(io.BytesIO(response.content)) as img:
                         image_format = img.format.lower() if img.format else 'jpg'
-                except Exception as img_err:
-                    logger.warning(f"Error determining image format: {img_err}. Guessing from URL")
+                except Exception:
                     parsed_url_path = urlparse(image_url).path
                     _, ext_from_url = os.path.splitext(parsed_url_path)
                     if ext_from_url and len(ext_from_url) > 1:
                         image_format = ext_from_url[1:].lower()
                         if image_format not in ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'tiff']:
-                            logger.warning(f"Unknown format '{image_format}' - using jpg")
                             image_format = 'jpg'
                     else:
                         image_format = 'jpg'
 
                 if keep_filenames:
-                    base_name = os.path.basename(urlparse(image_url).path)
-                    name_part, ext_part = os.path.splitext(base_name)
-                    filename_ext = image_format if not ext_part or ext_part[1:].lower() != image_format else ext_part[1:].lower()
-                    filename = f"{name_part or search_string_for_filename + str(indx)}.{filename_ext}"
+                    original_fname_part = os.path.splitext(os.path.basename(urlparse(image_url).path))[0]
+                    filename_ext = image_format
+                    current_image_count = len(all_image_data)
+                    filename = f"{original_fname_part or f'{img_basename_for_file}_{current_image_count + 1:03d}'}.{filename_ext}"
                 else:
-                    filename = f"{search_string_for_filename}_{indx}.{image_format}"
+                    current_image_count = len(all_image_data)
+                    filename = f"{img_basename_for_file}_{current_image_count + 1:03d}.{image_format}"
 
                 save_path = os.path.join(self.config.image_path, filename)
 
-                # Check if URL exists in cache and file exists
-                cached_info = image_cache.get(image_url)
-                if cached_info and os.path.exists(cached_info['path']):
+                existing_img_info = all_image_data.get(image_url)
+                if existing_img_info and os.path.exists(existing_img_info['path']):
                     try:
-                        with open(cached_info['path'], 'rb') as f:
-                            existing_content = f.read()
-                            existing_hash = hashlib.md5(existing_content).hexdigest()
-                            
-                        if existing_hash == cached_info['hash']:
-                            logger.info(f"File exists in cache, verified: {os.path.basename(cached_info['path'])}")
+                        with open(existing_img_info['path'], 'rb') as f_existing:
+                            existing_content = f_existing.read()
+                        existing_hash = hashlib.md5(existing_content).hexdigest()
+                        
+                        if existing_hash == existing_img_info['hash']:
+                            logger.info(f"Image already in metadata and verified: {os.path.basename(existing_img_info['path'])}")
                             logger.update_progress()
-                            current_total_saved = downloaded_previously_count + saved_count_this_session
-                            save_json_data(self.download_checkpoint_file, {
-                                'search_key_ref': self.config.search_key_for_query, # Store original query key
-                                'all_image_urls_hash': urls_hash,
-                                'last_downloaded_index': indx,
-                                'total_urls_to_download': len(image_urls),
-                                'saved_count_so_far': current_total_saved,
-                                'image_cache': image_cache
-                            })
                             continue
                     except Exception as e:
-                        logger.warning(f"Cache verification failed for {os.path.basename(cached_info['path'])}: {e}")
-                        # Continue to download new copy
+                        logger.warning(f"Metadata cache verification failed for {os.path.basename(existing_img_info['path'])}: {e}. Will re-download.")
                 
-                # Regular file existence check if not in cache
-                if os.path.exists(save_path):
-                    logger.info(f"File exists but not in cache, will verify: {os.path.basename(save_path)}")
-
-                # Calculate image hash before saving
                 image_hash = hashlib.md5(response.content).hexdigest()
                 
-                # Write content and verify integrity
                 with open(save_path, 'wb') as f:
                     f.write(response.content)
                 
@@ -193,8 +178,7 @@ class ImageDownloader:
                     os.remove(save_path)
                     raise Exception("File integrity check failed")
                 
-                # Update image cache with successful download
-                image_cache[image_url] = {
+                all_image_data[image_url] = {
                     'filename': filename,
                     'hash': image_hash,
                     'path': save_path,
@@ -203,66 +187,29 @@ class ImageDownloader:
                     'download_time': time.time()
                 }
                 
-                logger.info(f"Saved: {os.path.basename(save_path)}")
-                saved_count_this_session += 1
+                loaded_metadata['image_cache'] = all_image_data
+                loaded_metadata['search_key'] = self.config.search_key_for_query
+                loaded_metadata['download_completed'] = time.time()
+                save_json_data(metadata_file, loaded_metadata)
+                
+                logger.info(f"Saved: {os.path.basename(save_path)} and updated {os.path.basename(metadata_file)}")
+                newly_saved_count += 1
                 logger.update_progress()
 
-                current_total_saved = downloaded_previously_count + saved_count_this_session
-                save_json_data(self.download_checkpoint_file, {
-                    'search_key_ref': self.config.search_key_for_query, # Store original query key
-                    'all_image_urls_hash': urls_hash,
-                    'last_downloaded_index': indx,
-                    'total_urls_to_download': len(image_urls),
-                    'saved_count_so_far': current_total_saved,
-                    'image_cache': image_cache
-                })
-
             except requests.exceptions.RequestException as e:
-                logger.error(f"Network error downloading image {indx+1}: {e}")
-                # Remove from cache if network error to allow retry
-                if image_url in image_cache:
-                    del image_cache[image_url]
+                logger.error(f"Network error downloading image {indx+1} ({logger.truncate_url(image_url)}): {e}")
             except Image.UnidentifiedImageError:
                 logger.error(f"Invalid or corrupt image data from {logger.truncate_url(image_url)}")
-                # Remove from cache if corrupt
-                if image_url in image_cache:
-                    del image_cache[image_url]
             except Exception as e:
-                logger.error(f"Failed to save image {indx+1}: {e}")
-                # Remove from cache on general failure
-                if image_url in image_cache:
-                    del image_cache[image_url]
-                current_total_saved = downloaded_previously_count + saved_count_this_session
-                save_json_data(self.download_checkpoint_file, {
-                    'search_key_ref': self.config.search_key_for_query, # Store original query key
-                    'all_image_urls_hash': urls_hash,
-                    'last_downloaded_index': indx,
-                    'total_urls_to_download': len(image_urls),
-                    'saved_count_so_far': current_total_saved,
-                    'image_cache': image_cache
-                })
+                logger.error(f"Failed to save image {indx+1} ({logger.truncate_url(image_url)}): {e}")
 
-        total_saved_overall = downloaded_previously_count + saved_count_this_session
         logger.complete_progress()
         
-        if saved_count_this_session > 0:
-            logger.success(f"Downloaded {saved_count_this_session} new images ({total_saved_overall} total)")
+        total_images_in_metadata = len(all_image_data)
+        if newly_saved_count > 0:
+            logger.success(f"Downloaded and added {newly_saved_count} new images to metadata.")
         else:
-            logger.warning("No new images downloaded")
-
-        final_checkpoint_data = load_json_data(self.download_checkpoint_file)
-        if final_checkpoint_data and final_checkpoint_data.get('last_downloaded_index', -1) == len(image_urls) - 1:
-            cache_filename_base = self.config.clean_base_name or "generic_cache"
-            cache_file = os.path.join(self.config.image_path, f"{cache_filename_base}.json")
-            
-            save_json_data(cache_file, {
-                'search_key': self.config.search_key_for_query,
-                'download_completed': time.time(),
-                'image_cache': image_cache
-            })
-            remove_file_if_exists(self.download_checkpoint_file)
-            logger.info(f"Download complete - Cache saved to {os.path.basename(cache_file)}")
-        else:
-            logger.warning("Download may be incomplete - checkpoint retained")
-
-        return saved_count_this_session
+            logger.warning("No new images added to metadata in this session.")
+        logger.info(f"Total images in '{os.path.basename(metadata_file)}': {total_images_in_metadata}")
+        
+        return newly_saved_count

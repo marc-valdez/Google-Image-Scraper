@@ -156,9 +156,9 @@ class ScraperConfig:
         """
         return os.path.join(self.cache_dir, f"{self.clean_base_name}_url_checkpoint.json")
 
-    def get_download_checkpoint_file(self):
-        """Get the path to the download checkpoint file for this search key.
-        e.g., output/Category/ArrozCaldo/.cache/ArrozCaldo_download_checkpoint.json
+    def get_image_metadata_file(self):
+        """Get the path to the main image metadata file for this class.
+        e.g., output/Category/ArrozCaldo/.cache/ArrozCaldo_metadata.json
         """
-        name = self.clean_base_name or "generic_download"
-        return os.path.join(self.cache_dir, f"{name}_download_checkpoint.json")
+        name = self.clean_base_name or "generic_metadata"
+        return os.path.join(self.cache_dir, f"{name}_metadata.json")
