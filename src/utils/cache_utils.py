@@ -55,16 +55,16 @@ def is_cache_complete(category_dir: str, class_name: str):
         url_cache_file = cfg.get_url_cache_file(category_dir, class_name)
         image_metadata_file = cfg.get_image_metadata_file(category_dir, class_name)
         
-        if not os.path.isfile(url_cache_file) or not os.path.isfile(image_metadata_file):
-            logger.warning(f"Cache not complete for '{class_name}' in '{category_dir}': Missing cache files.")
+        if not os.path.isfile(url_cache_file):
+            logger.warning(f"Missing URL cache file for '{class_name}' in '{category_dir}'.")
+            return False
+            
+        if not os.path.isfile(image_metadata_file):
+            logger.warning(f"Missing image metadata file for '{class_name}' in '{category_dir}'.")
             return False
 
         url_data = load_json_data(url_cache_file)
         image_metadata = load_json_data(image_metadata_file)
-
-        if not url_data or not image_metadata:
-            logger.error(f"Cache not complete for '{class_name}' in '{category_dir}': Corrupted or empty cache files.")
-            return False
 
         urls_found = url_data.get('urls', [])
         if not isinstance(urls_found, list) or len(urls_found) < cfg.NUM_IMAGES_PER_CLASS:
