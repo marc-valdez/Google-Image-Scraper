@@ -43,7 +43,7 @@ def process_search_tasks(categories_data):
     return tasks
 
 def worker_thread(category_name, search_key, worker_id, driver_instance):
-    prefix = f"[Worker {worker_id}]"
+    prefix = f"[Task {worker_id}]"
     try:
         logger.status(f"{prefix} Starting search for '{search_key}' in category '{category_name}'")
 
@@ -64,8 +64,6 @@ def worker_thread(category_name, search_key, worker_id, driver_instance):
                     logger.success(f"{prefix} Downloaded {saved_count} images for '{search_key}' in '{category_name}'")
                 else:
                     logger.warning(f"{prefix} No new images downloaded for '{search_key}' in '{category_name}'")
-            else:
-                logger.warning(f"{prefix} No images found for '{search_key}' in '{category_name}' - skipping download")
 
         # GoogleImageScraper.close() calls UrlFetcher.close(), which in turn calls
         # WebDriverManager.close_driver(). Since the driver is from an external pool,
