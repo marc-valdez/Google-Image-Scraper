@@ -3,6 +3,7 @@ import json
 import concurrent.futures
 from GoogleImageScraper import GoogleImageScraper
 from config import ScraperConfig
+from logger import logger
 
 
 def worker_thread(category_name, search_key, num_images=10, headless=True):
@@ -16,7 +17,7 @@ def worker_thread(category_name, search_key, num_images=10, headless=True):
             headless=headless
         )
         
-        print(f"[INFO] Worker starting for Category: '{category_name}', Search Key: '{search_key}'")
+        logger.status(f"Starting search for '{search_key}' in category '{category_name}'")
         
         image_scraper = GoogleImageScraper(config=config)
         image_urls = image_scraper.fetch_image_urls()
@@ -24,13 +25,13 @@ def worker_thread(category_name, search_key, num_images=10, headless=True):
         if image_urls:
             image_scraper.download_images(image_urls)
         else:
-            print(f"[INFO] No image URLs found for '{search_key}' in category '{category_name}'. Skipping download.")
+            logger.warning(f"No images found for '{search_key}' in '{category_name}' - skipping download")
         
         image_scraper.close()
         del image_scraper
-        print(f"[INFO] Worker finished for Category: '{category_name}', Search Key: '{search_key}'")
+        logger.success(f"Completed search for '{search_key}' in '{category_name}'")
     except Exception as e:
-        print(f"[ERROR] Worker for Category: '{category_name}', Search Key: '{search_key}' encountered an error: {e}")
+        logger.error(f"Failed processing '{search_key}' in '{category_name}': {e}")
 
 
 def load_categories_from_json(json_file_path):
@@ -38,14 +39,14 @@ def load_categories_from_json(json_file_path):
     try:
         with open(json_file_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
-        print(f"[INFO] Successfully loaded categories from {json_file_path}")
+        logger.info(f"Loaded categories from {json_file_path}")
         return data
     except FileNotFoundError:
-        print(f"[ERROR] Categories JSON file not found: {json_file_path}")
+        logger.error(f"Categories file not found: {json_file_path}")
     except json.JSONDecodeError:
-        print(f"[ERROR] Error decoding JSON from file: {json_file_path}")
+        logger.error(f"Invalid JSON format in {json_file_path}")
     except Exception as e:
-        print(f"[ERROR] An unexpected error occurred while loading {json_file_path}: {e}")
+        logger.error(f"Failed to load {json_file_path}: {e}")
     return None
 
 
@@ -57,33 +58,37 @@ if __name__ == "__main__":
     HEADLESS_MODE = True
     
     # Load categories
+    # Configure logging
+    logger.set_verbose(False)  # Only show important messages by default
+    
+    # Load and validate categories
     categories_data = load_categories_from_json(CATEGORIES_FILE)
     if not categories_data:
-        print("[FATAL] Could not load categories. Exiting.")
+        logger.error("Failed to load categories - exiting")
         exit(1)
     
     # Prepare tasks
     tasks_to_run = []
     for category, search_terms in categories_data.items():
         if not isinstance(search_terms, list):
-            print(f"[WARN] Category '{category}' in JSON does not have a list of search terms. Skipping.")
+            logger.warning(f"Skipping category '{category}' - invalid format")
             continue
         for term in search_terms:
             if isinstance(term, str) and term.strip():
                 tasks_to_run.append({'category': category, 'search_key': term.strip()})
             else:
-                print(f"[WARN] Invalid search term '{term}' in category '{category}'. Skipping.")
+                logger.warning(f"Skipping invalid search term in category '{category}'")
     
     if not tasks_to_run:
-        print("[INFO] No valid search tasks to run based on the categories file.")
+        logger.warning("No valid search tasks found - exiting")
         exit(0)
 
-    print(f"[INFO] Starting image scraping for {len(tasks_to_run)} total search tasks across {len(categories_data)} categories.")
+    logger.status(f"Starting image scraping for {len(tasks_to_run)} tasks across {len(categories_data)} categories")
     
     # Create base output directory
     base_output_dir = os.path.join(os.getcwd(), "output")
     if not os.path.exists(base_output_dir):
-        print(f"[INFO] Creating base output directory: {base_output_dir}")
+        logger.info(f"Creating output directory: {base_output_dir}")
         os.makedirs(base_output_dir, exist_ok=True)
     
     # Run tasks in parallel
@@ -101,6 +106,6 @@ if __name__ == "__main__":
             try:
                 future.result()
             except Exception as e:
-                print(f"[ERROR] A thread executor task raised an unhandled exception: {e}")
+                logger.error(f"Thread executor failed: {e}")
     
-    print("[INFO] All scraping tasks completed.")
+    logger.success("Image scraping completed successfully")

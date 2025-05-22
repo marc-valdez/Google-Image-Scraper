@@ -5,6 +5,7 @@ from selenium.common.exceptions import (
     NoSuchElementException, StaleElementReferenceException,
     TimeoutException, WebDriverException
 )
+from logger import logger
 from cache_utils import load_json_data, save_json_data, remove_file_if_exists
 import time
 import random
@@ -42,13 +43,14 @@ class UrlFetcher:
         return f"https://www.google.com/search?q={self.search_key}&source=lnms&tbm=isch&sa=X&ved=2ahUKEwie44_AnqLpAhUhBWMBHUFGD90Q_AUoAXoECBUQAw&biw=1920&bih=947"
 
     def find_image_urls(self):
-        print(f"[INFO] Attempting to gather image links for '{self.search_key}'...")
+        logger.status(f"Starting image search for '{self.search_key}'")
 
         image_urls = []
         count = 0
         current_selenium_item_index = 1
         missed_count = 0
 
+        # Check cache first
         cached_urls_data = load_json_data(self.url_cache_file)
         if cached_urls_data and cached_urls_data.get('search_key') == self.search_key:
             loaded_cached_urls = cached_urls_data.get('urls', [])
@@ -58,16 +60,16 @@ class UrlFetcher:
             count = len(image_urls)
             
             if count >= self.number_of_images:
-                print(f"[INFO] Loaded {count} (>= requested {self.number_of_images}) unique image URLs from cache for '{self.search_key}'.")
+                logger.success(f"Found {self.number_of_images} cached images for '{self.search_key}'")
                 return image_urls[:self.number_of_images]
             else:
-                print(f"[INFO] Cache for '{self.search_key}' has {count} unique URLs. Need {self.number_of_images - count} more.")
+                logger.info(f"Found {count} cached images - searching for {self.number_of_images - count} more")
                 current_selenium_item_index = cached_urls_data.get('final_selenium_item_index', 0) + 1
-                print(f"[INFO] Resuming Selenium iteration from item index {current_selenium_item_index} (from cache).")
 
+        # Check checkpoint
         checkpoint_data = load_json_data(self.url_checkpoint_file)
         if checkpoint_data and checkpoint_data.get('search_key') == self.search_key:
-            print(f"[INFO] Resuming URL fetching for '{self.search_key}' from checkpoint.")
+            logger.info(f"Resuming search from checkpoint for '{self.search_key}'")
             checkpoint_urls = checkpoint_data.get('image_urls_found', [])
             for url_item in checkpoint_urls:
                 if url_item not in image_urls:
@@ -75,7 +77,6 @@ class UrlFetcher:
             count = len(image_urls)
             current_selenium_item_index = max(current_selenium_item_index, checkpoint_data.get('last_selenium_item_index', 1))
             missed_count = checkpoint_data.get('missed_count', 0)
-            print(f"[INFO] Checkpoint state: {count} URLs, next Selenium item index {current_selenium_item_index}, missed_count={missed_count}.")
         else:
             missed_count = 0
 
@@ -83,16 +84,17 @@ class UrlFetcher:
         search_string = '//*[@id="rso"]/div/div/div[1]/div/div/div[%s]/div[2]/h3/a/div/div/div/g-img'
         
         if count < self.number_of_images:
-            print(f"[INFO] Gathering remaining image links online for '{self.search_key}'...")
+            logger.status(f"Searching Google Images for '{self.search_key}'")
+            logger.start_progress(self.number_of_images - count, f"Finding images for '{self.search_key}'")
             self.driver.get(self.google_search_url)
             
-            # Wait for initial page load with dynamic timeout
+            # Wait for initial page load
             try:
                 WebDriverWait(self.driver, 10).until(
                     EC.presence_of_element_located((By.XPATH, search_string % 1))
                 )
             except TimeoutException:
-                print("[WARN] Initial page load timeout - refreshing page...")
+                logger.warning("Page load timeout - refreshing")
                 self.driver.refresh()
                 time.sleep(5)
 
@@ -100,9 +102,9 @@ class UrlFetcher:
         page_refresh_counter = 0
         while count < self.number_of_images and missed_count < self.config.max_missed:
             try:
-                # Periodic page refresh to prevent stale state
+                # Periodic page refresh
                 if page_refresh_counter >= 50:
-                    print("[INFO] Performing periodic page refresh...")
+                    logger.info("Refreshing page to prevent stale state")
                     self.driver.refresh()
                     time.sleep(3)
                     page_refresh_counter = 0
@@ -135,7 +137,8 @@ class UrlFetcher:
                         if src_link not in image_urls:
                             image_urls.append(src_link)
                             count = len(image_urls)
-                            print(f"[INFO] {self.search_key} | #{count} (Selenium Idx: {current_selenium_item_index}) | {src_link}")
+                            logger.info(f"Found image {count}: {logger.truncate_url(src_link)}")
+                            logger.update_progress()
                             
                             if count % 5 == 0:
                                 checkpoint_to_save = {
@@ -145,26 +148,26 @@ class UrlFetcher:
                                     'image_urls_found': image_urls
                                 }
                                 if save_json_data(self.url_checkpoint_file, checkpoint_to_save):
-                                    print(f"[INFO] URL fetching checkpoint saved. URLs: {count}, Selenium Idx: {current_selenium_item_index}.")
+                                    logger.info(f"Saved checkpoint: {count} URLs found")
                                 else:
-                                    print(f"[WARN] Failed to save URL fetching checkpoint.")
+                                    logger.warning("Failed to save checkpoint")
                         found_src_in_popup = True
                         break
 
             except NoSuchElementException:
                 missed_count += 1
             except StaleElementReferenceException:
-                print("[WARN] Encountered stale element - retrying...")
+                logger.warning("Stale element - retrying")
                 attempt += 1
                 time.sleep(exponential_backoff(attempt))
                 continue
             except WebDriverException as e:
-                print(f"[WARN] WebDriver error: {str(e)}")
+                logger.warning(f"WebDriver error: {str(e)}")
                 missed_count += 1
                 attempt += 1
                 time.sleep(exponential_backoff(attempt))
             except Exception as e:
-                print(f"[ERROR] Unexpected error: {str(e)}")
+                logger.error(f"Unexpected error: {str(e)}")
                 missed_count += 1
                 attempt += 1
                 time.sleep(exponential_backoff(attempt))
@@ -196,7 +199,7 @@ class UrlFetcher:
                             try:
                                 load_more_button = self.driver.find_element(by_type, selector_value)
                                 if load_more_button.is_displayed() and load_more_button.is_enabled():
-                                    print("[INFO] Clicking 'Load more results' button.")
+                                    logger.info("Loading more results")
                                     load_more_button.click()
                                     time.sleep(3)
                                     button_clicked = True
@@ -215,10 +218,11 @@ class UrlFetcher:
                     
                 page_refresh_counter += 1
 
-        print(f"[INFO] Total unique image URLs gathered for '{self.search_key}': {len(image_urls)}")
+        logger.complete_progress()
+        logger.success(f"Found {len(image_urls)} unique images for '{self.search_key}'")
         
         if image_urls:
-            print(f"[INFO] Saving all {len(image_urls)} unique URLs to cache for '{self.search_key}'.")
+            logger.info(f"Caching {len(image_urls)} URLs for '{self.search_key}'")
             url_cache_data = {
                 'search_key': self.search_key,
                 'number_of_images_requested': self.number_of_images,
@@ -229,7 +233,5 @@ class UrlFetcher:
             save_json_data(self.url_cache_file, url_cache_data)
 
         remove_file_if_exists(self.url_checkpoint_file)
-        print(f"[INFO] URL fetching checkpoint cleared for '{self.search_key}'.")
-
-        print("[INFO] Google image URL gathering ended.")
+        logger.info("Search checkpoint cleared")
         return image_urls[:self.number_of_images]

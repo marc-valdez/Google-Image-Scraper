@@ -8,6 +8,7 @@ from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
 import requests
 from cache_utils import load_json_data, save_json_data, remove_file_if_exists
+from logger import logger
 
 class RateLimiter:
     def __init__(self, min_interval=1.0):
@@ -68,11 +69,11 @@ class ImageDownloader:
 
     def save_images(self, image_urls, keep_filenames):
         if not image_urls:
-            print("[INFO] No image URLs provided to save.")
+            logger.info("No image URLs provided to save")
             return 0
 
         effective_search_key = self.config.search_key_for_query or "generic_download"
-        print(f"[INFO] Attempting to save {len(image_urls)} images for '{effective_search_key}'...")
+        logger.start_progress(len(image_urls), f"Downloading images for '{effective_search_key}'")
 
         start_index = 0
         # Accessing the property here
@@ -82,9 +83,9 @@ class ImageDownloader:
         if download_checkpoint and \
            download_checkpoint.get('search_key_ref') == effective_search_key and \
            download_checkpoint.get('all_image_urls_hash') == urls_hash:
-            start_index = download_checkpoint.get('last_downloaded_index', -1) + 1
-            downloaded_previously_count = download_checkpoint.get('saved_count_so_far', 0)
-            print(f"[INFO] Resuming download for '{effective_search_key}' from index {start_index}. Previously saved: {downloaded_previously_count}.")
+           start_index = download_checkpoint.get('last_downloaded_index', -1) + 1
+           downloaded_previously_count = download_checkpoint.get('saved_count_so_far', 0)
+           logger.info(f"Resuming from index {start_index} ({downloaded_previously_count} already saved)")
         else:
             # Accessing the property here
             save_json_data(self.download_checkpoint_file, {
@@ -95,7 +96,7 @@ class ImageDownloader:
                 'saved_count_so_far': 0
             })
             downloaded_previously_count = 0
-            print(f"[INFO] Starting new download session or checkpoint reset for '{effective_search_key}'.")
+            logger.info("Starting new download session")
 
 
         saved_count_this_session = 0
@@ -109,7 +110,7 @@ class ImageDownloader:
             try:
                 self.rate_limiter.wait()  # Rate limit requests
                 
-                print(f"[INFO] Downloading {indx+1}/{len(image_urls)} for '{effective_search_key}': {image_url}")
+                logger.info(f"Downloading {indx+1}/{len(image_urls)}: {logger.truncate_url(image_url)}")
                 headers = {
                     "User-Agent": (
                         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -128,13 +129,13 @@ class ImageDownloader:
                     with Image.open(io.BytesIO(response.content)) as img:
                         image_format = img.format.lower() if img.format else 'jpg'
                 except Exception as img_err:
-                    print(f"[WARN] PIL error determining image format for {image_url}: {img_err}. Guessing from URL.")
+                    logger.warning(f"Error determining image format: {img_err}. Guessing from URL")
                     parsed_url_path = urlparse(image_url).path
                     _, ext_from_url = os.path.splitext(parsed_url_path)
                     if ext_from_url and len(ext_from_url) > 1:
                         image_format = ext_from_url[1:].lower()
                         if image_format not in ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'tiff']:
-                            print(f"[WARN] Guessed extension '{image_format}' uncommon. Defaulting to 'jpg'.")
+                            logger.warning(f"Unknown format '{image_format}' - using jpg")
                             image_format = 'jpg'
                     else:
                         image_format = 'jpg'
@@ -150,7 +151,8 @@ class ImageDownloader:
                 save_path = os.path.join(self.config.image_path, filename)
 
                 if os.path.exists(save_path):
-                    print(f"[INFO] File exists, skipping: {save_path}")
+                    logger.info(f"File exists, skipping: {os.path.basename(save_path)}")
+                    logger.update_progress()
                     current_total_saved = downloaded_previously_count + saved_count_this_session
                     save_json_data(self.download_checkpoint_file, {
                         'search_key_ref': effective_search_key,
@@ -169,8 +171,9 @@ class ImageDownloader:
                     os.remove(save_path)
                     raise Exception("File integrity check failed")
                 
-                print(f"[INFO] Saved and verified: {save_path}")
+                logger.info(f"Saved: {os.path.basename(save_path)}")
                 saved_count_this_session += 1
+                logger.update_progress()
 
                 current_total_saved = downloaded_previously_count + saved_count_this_session
                 save_json_data(self.download_checkpoint_file, {
@@ -182,11 +185,11 @@ class ImageDownloader:
                 })
 
             except requests.exceptions.RequestException as e:
-                print(f"[ERROR] Network error downloading image {indx+1} ({image_url}): {e}")
+                logger.error(f"Network error downloading image {indx+1}: {e}")
             except Image.UnidentifiedImageError:
-                print(f"[ERROR] Invalid or corrupt image data {indx+1} ({image_url})")
+                logger.error(f"Invalid or corrupt image data from {logger.truncate_url(image_url)}")
             except Exception as e:
-                print(f"[ERROR] Unexpected error saving image {indx+1} ({image_url}): {e}")
+                logger.error(f"Failed to save image {indx+1}: {e}")
                 current_total_saved = downloaded_previously_count + saved_count_this_session
                 save_json_data(self.download_checkpoint_file, {
                     'search_key_ref': effective_search_key,
@@ -197,16 +200,18 @@ class ImageDownloader:
                 })
 
         total_saved_overall = downloaded_previously_count + saved_count_this_session
-        print("--------------------------------------------------")
-        print(f"[INFO] Download for '{effective_search_key}': {saved_count_this_session} new, {total_saved_overall} total for this set.")
+        logger.complete_progress()
+        
+        if saved_count_this_session > 0:
+            logger.success(f"Downloaded {saved_count_this_session} new images ({total_saved_overall} total)")
+        else:
+            logger.warning("No new images downloaded")
 
         final_checkpoint_data = load_json_data(self.download_checkpoint_file)
         if final_checkpoint_data and final_checkpoint_data.get('last_downloaded_index', -1) == len(image_urls) - 1:
             remove_file_if_exists(self.download_checkpoint_file)
-            print(f"[INFO] All downloads for '{effective_search_key}' complete. Checkpoint cleared.")
+            logger.info("Download checkpoint cleared")
         else:
-            print(f"[INFO] Download for '{effective_search_key}' may be incomplete. Checkpoint retained.")
-            if final_checkpoint_data:
-                 print(f"[DEBUG] Final checkpoint: last_idx={final_checkpoint_data.get('last_downloaded_index', -1)}, total_urls={len(image_urls)}")
+            logger.warning("Download may be incomplete - checkpoint retained")
 
         return saved_count_this_session
