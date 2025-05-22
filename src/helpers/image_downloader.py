@@ -79,7 +79,7 @@ class ImageDownloader:
             user_agent_to_use = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36" # Default
             if cfg.ROTATE_USER_AGENT and cfg.USER_AGENTS:
                 user_agent_to_use = random.choice(cfg.USER_AGENTS)
-                logger.debug(f"[Worker {self.worker_id}] ImageDownloader using User-Agent: {user_agent_to_use}")
+                logger.info(f"[Worker {self.worker_id}] ImageDownloader using User-Agent: {user_agent_to_use}")
 
             headers = {
                 "User-Agent": user_agent_to_use,

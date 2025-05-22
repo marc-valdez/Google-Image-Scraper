@@ -2,9 +2,9 @@ import os
 import re
 
 NUM_WORKERS = 4
-NUM_IMAGES_PER_CLASS = 500
+NUM_IMAGES_PER_CLASS = 100
 HEADLESS_MODE = True
-MAX_MISSED = 25
+MAX_MISSED = 5
 KEEP_FILENAMES = False
 
 REQUEST_INTERVAL = 1.0
@@ -43,17 +43,17 @@ USER_AGENTS = [
 ROTATE_USER_AGENT = True
 
 # Google Search Query Parameters:
-SEARCH_QUERY_EXACT_PHRASE = ""                  # as_epq
-SEARCH_QUERY_ANY_OF_THESE_WORDS = "cooked"      # as_oq
-SEARCH_QUERY_EXCLUDE_THESE_WORDS = "raw"        # as_eq
-SEARCH_QUERY_IMAGE_SIZE = "l"                   # imgsz (l: large)
-SEARCH_QUERY_ASPECT_RATIO = ""                  # imgar
-SEARCH_QUERY_IMAGE_COLOR_TYPE = "color"         # imgc (color)
-SEARCH_QUERY_SPECIFIC_COLOR = ""                # imgcolor
-SEARCH_QUERY_IMAGE_TYPE = "photo"               # imgtype (photo)
-SEARCH_QUERY_COUNTRY_RESTRICTION = "countryPH"  # cr (countryPH)
-SEARCH_QUERY_SITE_SEARCH = ""                   # as_sitesearch
-SEARCH_QUERY_FILE_TYPE = "jpg"                  # as_filetype (jpg)
+SEARCH_QUERY_EXACT_PHRASE = ""            # as_epq
+SEARCH_QUERY_ANY_OF_THESE_WORDS = ""      # as_oq
+SEARCH_QUERY_EXCLUDE_THESE_WORDS = ""     # as_eq
+SEARCH_QUERY_IMAGE_SIZE = ""              # imgsz (l: large)
+SEARCH_QUERY_ASPECT_RATIO = ""            # imgar
+SEARCH_QUERY_IMAGE_COLOR_TYPE = ""        # imgc (color)
+SEARCH_QUERY_SPECIFIC_COLOR = ""          # imgcolor
+SEARCH_QUERY_IMAGE_TYPE = "photo"         # imgtype (photo)
+SEARCH_QUERY_COUNTRY_RESTRICTION = ""     # cr (countryPH)
+SEARCH_QUERY_SITE_SEARCH = ""             # as_sitesearch
+SEARCH_QUERY_FILE_TYPE = ""               # as_filetype (jpg)
 
 def get_output_dir() -> str:
     return os.path.join(os.getcwd(), OUTPUT_DIR_BASE)
