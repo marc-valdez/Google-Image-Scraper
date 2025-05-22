@@ -5,8 +5,8 @@ from selenium.common.exceptions import (
     NoSuchElementException, StaleElementReferenceException,
     TimeoutException, WebDriverException
 )
-from logger import logger
-from cache_utils import load_json_data, save_json_data, remove_file_if_exists
+from src.logging.logger import logger
+from src.utils.cache_utils import load_json_data, save_json_data, remove_file_if_exists
 import time
 import random
 

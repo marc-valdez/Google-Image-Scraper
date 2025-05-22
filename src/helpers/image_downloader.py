@@ -7,8 +7,8 @@ from urllib.parse import urlparse
 from requests.adapters import HTTPAdapter
 import requests
 from urllib3 import Retry
-from cache_utils import load_json_data, save_json_data, remove_file_if_exists
-from logger import logger
+from src.logging.logger import logger
+from src.utils.cache_utils import load_json_data, save_json_data, remove_file_if_exists
 
 class RateLimiter:
     def __init__(self, min_interval=1.0):

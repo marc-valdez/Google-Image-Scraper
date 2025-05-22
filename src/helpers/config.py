@@ -1,6 +1,6 @@
 import os
-from chrome_finder import ChromeFinder
-from logger import logger
+from src.environment.chrome_finder import ChromeFinder
+from src.logging.logger import logger
 
 class ScraperConfig:
     """Configuration for the Google Image Scraper.

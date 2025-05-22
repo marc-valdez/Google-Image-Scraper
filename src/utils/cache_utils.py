@@ -1,6 +1,6 @@
 import os
 import json
-from logger import logger
+from src.logging.logger import logger
 
 def ensure_cache_dir(cache_path):
     """Ensures that the cache directory exists."""

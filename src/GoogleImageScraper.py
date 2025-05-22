@@ -1,10 +1,10 @@
 import os
-from cache_utils import ensure_cache_dir
-from config import ScraperConfig
-from url_fetcher import UrlFetcher
-from image_downloader import ImageDownloader
-from webdriver_manager import WebDriverManager
-from logger import logger
+from src.utils.cache_utils import ensure_cache_dir
+from src.helpers.config import ScraperConfig
+from src.helpers.url_fetcher import UrlFetcher
+from src.helpers.image_downloader import ImageDownloader
+from src.environment.webdriver_manager import WebDriverManager
+from src.logging.logger import logger
 
 class GoogleImageScraper():
     def __init__(self, config: ScraperConfig):

@@ -6,8 +6,8 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service as ChromeService
-import patch
-from logger import logger
+from src.logging.logger import logger
+from src.environment import patch
 
 class WebDriverManager:
     def __init__(self, config):
@@ -42,9 +42,7 @@ class WebDriverManager:
             logger.info(f"ChromeDriver not found at: {self.config.webdriver_path}")
             logger.info("Attempting to download compatible ChromeDriver")
             
-            # Assuming patch.py's download_lastest_chromedriver can take chrome_exe_path
-            # to determine the correct browser version for which to download chromedriver.
-            # Pass chrome_path instead of the old chrome_exe_path parameter
+            # Pass Chrome binary path to help determine correct version
             is_patched = patch.download_lastest_chromedriver(chrome_path=self.config.chrome_binary_path)
             if not is_patched:
                 raise RuntimeError(
@@ -54,7 +52,6 @@ class WebDriverManager:
             logger.success(f"ChromeDriver installed at: {self.config.webdriver_path}")
         else:
             logger.info(f"Found existing ChromeDriver: {self.config.webdriver_path}")
-
 
         # 3. Attempt to initialize WebDriver (with retries for version mismatch patching if an existing chromedriver was found but is wrong)
         for attempt in range(2):
@@ -118,7 +115,7 @@ class WebDriverManager:
                         logger.info(f"ChromeDriver supports Chrome version {version_hint_from_error}")
                      
                     logger.info(f"Re-patching ChromeDriver to match Chrome version")
-                    # Update parameters to match new function signature
+                    # Pass both chrome_path and required_version for more accurate matching
                     if patch.download_lastest_chromedriver(
                         chrome_path=self.config.chrome_binary_path,
                         required_version=version_hint_from_error

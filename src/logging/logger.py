@@ -1,7 +1,6 @@
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 from rich.theme import Theme
-import sys
 from datetime import datetime
 
 custom_theme = Theme({

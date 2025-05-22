@@ -1,7 +1,7 @@
 import os
 import platform
 import shutil
-from logger import logger
+from src.logging.logger import logger
 
 class ChromeFinder:
     """

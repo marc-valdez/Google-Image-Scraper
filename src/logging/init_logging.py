@@ -1,5 +1,4 @@
 import os
-import sys
 from absl import flags
 from absl import app
 from absl import logging as absl_logging

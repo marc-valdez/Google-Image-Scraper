@@ -1,12 +1,10 @@
-import sys
 from absl import app
-from init_logging import configure_logging
 import os
 import json
 import concurrent.futures
-from GoogleImageScraper import GoogleImageScraper
-from config import ScraperConfig
-from logger import logger
+from src.GoogleImageScraper import GoogleImageScraper
+from src.helpers.config import ScraperConfig
+from src.logging.logger import logger
 
 # Configuration constants
 NUM_WORKERS = 8
