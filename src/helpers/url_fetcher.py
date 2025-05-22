@@ -18,15 +18,15 @@ def exponential_backoff(attempt, base=1, max_d=None):
     return min(base * (2 ** attempt), max_delay) + random.uniform(0, 0.1)
 
 class UrlFetcher:
-    def __init__(self, category_dir: str, search_term: str, worker_id: int):
+    def __init__(self, category_dir: str, class_name: str, worker_id: int):
         self.worker_id = worker_id
         
         self.driver_manager = WebDriverManager()
         self.driver = self.driver_manager.driver
         
-        self.search_key_query = cfg.get_search_key_for_query(search_term) 
+        self.query = class_name
         self.target_images = cfg.NUM_IMAGES_PER_CLASS
-        self.cache_file_path = cfg.get_url_cache_file(category_dir, search_term)
+        self.cache_file_path = cfg.get_url_cache_file(category_dir, class_name)
         
         params = {
             "as_st": "y",   # Advanced search type
@@ -35,7 +35,7 @@ class UrlFetcher:
             "ved": "2ahUKEwie44_AnqLpAhUhBWMBHUFGD90Q_AUoAXoECBUQAw", # A tracking/analytics value.
             "biw": 1280,    # Browser inner width in pixels (e.g. viewport width).
             "bih": 720,     # Browser inner height in pixels (e.g. viewport height).
-            "as_q": self.search_key_query,
+            "as_q": self.query,
             "as_epq": cfg.SEARCH_QUERY_EXACT_PHRASE,
             "as_oq": cfg.SEARCH_QUERY_ANY_OF_THESE_WORDS,
             "as_eq": cfg.SEARCH_QUERY_EXCLUDE_THESE_WORDS,
@@ -52,7 +52,7 @@ class UrlFetcher:
         self.search_url = f"https://www.google.com/search?{urllib.parse.urlencode(params)}"
 
     def find_image_urls(self):
-        logger.status(f"[Worker {self.worker_id}] Searching for '{self.search_key_query}' with URL: {self.search_url}")
+        logger.status(f"[Worker {self.worker_id}] Searching for '{self.query}' with URL: {self.search_url}")
         
         found_urls = []
         cache_data = load_json_data(self.cache_file_path) 
@@ -60,7 +60,7 @@ class UrlFetcher:
         if cache_data and cache_data.get('search_url_used') == self.search_url:
             found_urls = list(dict.fromkeys(cache_data.get('urls', [])))
             if len(found_urls) >= self.target_images:
-                logger.success(f"[Worker {self.worker_id}] Loaded {self.target_images} cached image URLs for '{self.search_key_query}'.")
+                logger.success(f"[Worker {self.worker_id}] Loaded {self.target_images} cached image URLs for '{self.query}'.")
                 return found_urls[:self.target_images]
             logger.info(f"[Worker {self.worker_id}] Found {len(found_urls)} cached URLs. Need {self.target_images - len(found_urls)} more.")
 
@@ -85,7 +85,7 @@ class UrlFetcher:
              logger.info(f"[Worker {self.worker_id}] All required images already found.")
              return found_urls[:self.target_images]
 
-        logger.start_progress(needed_urls, f"Finding images for '{self.search_key_query}'", self.worker_id)
+        logger.start_progress(needed_urls, f"Finding images for '{self.query}'", self.worker_id)
         
         high_res_image_selectors = ["n3VNCb", "iPVvYb", "r48jcc", "pT0Scc", "H8Rx8c"]
 
@@ -121,7 +121,7 @@ class UrlFetcher:
                             
                             save_json_data(self.cache_file_path, {
                                 'search_url_used': self.search_url, 
-                                'search_key': self.search_key_query, 
+                                'search_key': self.query, 
                                 'number_of_images_requested': self.target_images,
                                 'urls_found_count': len(found_urls),
                                 'urls': found_urls
@@ -171,13 +171,13 @@ class UrlFetcher:
 
         logger.complete_progress(worker_id=self.worker_id)
         if len(found_urls) >= self.target_images:
-            logger.success(f"[Worker {self.worker_id}] Successfully found {self.target_images} image URLs for '{self.search_key_query}'.")
+            logger.success(f"[Worker {self.worker_id}] Successfully found {self.target_images} image URLs for '{self.query}'.")
         else:
-            logger.warning(f"[Worker {self.worker_id}] Found {len(found_urls)}/{self.target_images} URLs for '{self.search_key_query}' after {cfg.MAX_MISSED} misses or exhausting content.")
+            logger.warning(f"[Worker {self.worker_id}] Found {len(found_urls)}/{self.target_images} URLs for '{self.query}' after {cfg.MAX_MISSED} misses or exhausting content.")
         
         return found_urls[:self.target_images]
 
     def close(self):
         if hasattr(self, 'driver_manager') and self.driver_manager:
             self.driver_manager.close_driver()
-            logger.info(f"[Worker {self.worker_id}] WebDriver closed for UrlFetcher of '{self.search_key_query}'.")
+            logger.info(f"[Worker {self.worker_id}] WebDriver closed for UrlFetcher of '{self.query}'.")

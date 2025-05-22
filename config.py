@@ -1,8 +1,8 @@
 import os
 
 NUM_WORKERS = 1
-NUM_IMAGES_PER_CLASS = 10
-HEADLESS_MODE = False
+NUM_IMAGES_PER_CLASS = 1
+HEADLESS_MODE = True
 MAX_MISSED = 25
 KEEP_FILENAMES = False
 
@@ -39,23 +39,19 @@ SEARCH_QUERY_FILE_TYPE = "jpg"                  # as_filetype (jpg)
 def get_output_dir() -> str:
     return os.path.join(os.getcwd(), OUTPUT_DIR_BASE)
 
-def get_image_path(category_dir: str, search_term: str) -> str:
-    clean_base = search_term.replace(" ", "")
-    return os.path.join(get_output_dir(), category_dir, clean_base)
+def get_image_path(category_dir: str, class_name: str) -> str:
+    return os.path.join(get_output_dir(), category_dir, class_name)
 
-def get_cache_dir(category_dir: str, search_term: str) -> str:
-    return os.path.join(get_image_path(category_dir, search_term), ".cache")
+def get_cache_dir(category_dir: str, class_name: str) -> str:
+    return os.path.join(get_image_path(category_dir, class_name), ".cache")
 
-def get_clean_base_name(search_term: str) -> str:
-    return search_term.replace(" ", "") or "Unnamed"
+def get_clean_base_name(class_name: str) -> str:
+    return class_name.replace(" ", "") or "Unnamed"
 
-def get_search_key_for_query(search_term: str) -> str:
-    return search_term.strip()
+def get_url_cache_file(category_dir: str, class_name: str) -> str:
+    return os.path.join(get_cache_dir(category_dir, class_name),
+                        f"{get_clean_base_name(class_name)}_urls.json")
 
-def get_url_cache_file(category_dir: str, search_term: str) -> str:
-    return os.path.join(get_cache_dir(category_dir, search_term),
-                        f"{get_clean_base_name(search_term)}_urls.json")
-
-def get_image_metadata_file(category_dir: str, search_term: str) -> str:
-    return os.path.join(get_cache_dir(category_dir, search_term),
-                        f"{get_clean_base_name(search_term)}_metadata.json")
+def get_image_metadata_file(category_dir: str, class_name: str) -> str:
+    return os.path.join(get_cache_dir(category_dir, class_name),
+                        f"{get_clean_base_name(class_name)}_metadata.json")

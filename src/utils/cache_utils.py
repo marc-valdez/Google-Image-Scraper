@@ -50,30 +50,30 @@ def remove_file_if_exists(file_path):
         logger.error(f"Could not remove file {file_path}: {e}")
         return False
     
-def is_cache_complete(category_dir: str, search_term: str):
+def is_cache_complete(category_dir: str, class_name: str):
     try:
-        url_cache_file = cfg.get_url_cache_file(category_dir, search_term)
-        image_metadata_file = cfg.get_image_metadata_file(category_dir, search_term)
+        url_cache_file = cfg.get_url_cache_file(category_dir, class_name)
+        image_metadata_file = cfg.get_image_metadata_file(category_dir, class_name)
         
         if not os.path.isfile(url_cache_file) or not os.path.isfile(image_metadata_file):
-            logger.warning(f"Cache not complete for '{search_term}' in '{category_dir}': Missing cache files.")
+            logger.warning(f"Cache not complete for '{class_name}' in '{category_dir}': Missing cache files.")
             return False
 
         url_data = load_json_data(url_cache_file)
         image_metadata = load_json_data(image_metadata_file)
 
         if not url_data or not image_metadata:
-            logger.error(f"Cache not complete for '{search_term}' in '{category_dir}': Corrupted or empty cache files.")
+            logger.error(f"Cache not complete for '{class_name}' in '{category_dir}': Corrupted or empty cache files.")
             return False
 
         urls_found = url_data.get('urls', [])
         if not isinstance(urls_found, list) or len(urls_found) < cfg.NUM_IMAGES_PER_CLASS:
-            logger.error(f"Cache not complete for '{search_term}' in '{category_dir}': Not enough URLs in cache ({len(urls_found)}/{cfg.NUM_IMAGES_PER_CLASS}).")
+            logger.error(f"Cache not complete for '{class_name}' in '{category_dir}': Not enough URLs in cache ({len(urls_found)}/{cfg.NUM_IMAGES_PER_CLASS}).")
             return False
 
         images_in_metadata = image_metadata.get('image_cache', {})
         if not isinstance(images_in_metadata, dict):
-            logger.error(f"Cache not complete for '{search_term}' in '{category_dir}': Invalid image_cache format.")
+            logger.error(f"Cache not complete for '{class_name}' in '{category_dir}': Invalid image_cache format.")
             return False
 
         verified_image_count = 0
@@ -99,12 +99,12 @@ def is_cache_complete(category_dir: str, search_term: str):
 
 
         if verified_image_count < cfg.NUM_IMAGES_PER_CLASS:
-            logger.error(f"Cache not complete for '{search_term}' in '{category_dir}': Not enough verified images in metadata ({verified_image_count}/{cfg.NUM_IMAGES_PER_CLASS}).")
+            logger.error(f"Cache not complete for '{class_name}' in '{category_dir}': Not enough verified images in metadata ({verified_image_count}/{cfg.NUM_IMAGES_PER_CLASS}).")
             return False
         
-        logger.info(f"Cache is complete for '{search_term}' in '{category_dir}'.")
+        logger.info(f"Cache is complete for '{class_name}' in '{category_dir}'.")
         return True
         
     except Exception as e:
-        logger.error(f"Error checking cache completeness for '{search_term}' in '{category_dir}': {e}")
+        logger.error(f"Error checking cache completeness for '{class_name}' in '{category_dir}': {e}")
         return False

@@ -27,11 +27,11 @@ def load_categories_from_json(json_file_path):
 
 def process_search_tasks(categories_data):
     tasks = []
-    for category, search_terms in categories_data.items():
-        if not isinstance(search_terms, list):
+    for category, class_names in categories_data.items():
+        if not isinstance(class_names, list):
             logger.warning(f"Skipping category '{category}' - invalid format")
             continue
-        for term in search_terms:
+        for term in class_names:
             if isinstance(term, str) and term.strip():
                 tasks.append({
                     'category': category,
@@ -48,7 +48,7 @@ def worker_thread(category_name, search_key, worker_id):
 
         image_scraper = GoogleImageScraper(
             category_dir=category_name,
-            search_term=search_key,
+            class_name=search_key,
             worker_id=worker_id
         )
         

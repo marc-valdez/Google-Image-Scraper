@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 from requests.adapters import HTTPAdapter
 from urllib3 import Retry
 import requests
+from datetime import datetime
 
 from src.logging.logger import logger
 from src.utils.cache_utils import load_json_data, save_json_data
@@ -23,26 +24,29 @@ class RateLimiter:
             time.sleep(self.min_interval - elapsed)
         self.last_call = time.time()
 
-def verify_image_file(file_path, content):
+def verify_image_file(file_path, content_hash_to_verify):
     try:
         with open(file_path, 'rb') as f:
-            return hashlib.md5(f.read()).hexdigest() == hashlib.md5(content).hexdigest()
+            return hashlib.md5(f.read()).hexdigest() == content_hash_to_verify
     except Exception:
         return False
 
 class ImageDownloader:
-    def __init__(self, category_dir: str, search_term: str, worker_id: int):
+    def __init__(self, category_dir: str, class_name: str, worker_id: int):
         self.category_dir = category_dir
-        self.search_term = search_term
+        self.class_name = class_name
         self.worker_id = worker_id
         
-        self.image_path = cfg.get_image_path(self.category_dir, self.search_term)
-        self.search_key_query = cfg.get_search_key_for_query(self.search_term)
-        self.clean_base = cfg.get_clean_base_name(self.search_term)
+        self.image_path = cfg.get_image_path(self.category_dir, self.class_name)
+        self.class_name = self.class_name
+        self.clean_base = cfg.get_clean_base_name(self.class_name)
 
         self.rate_limiter = RateLimiter()
         self.session = self._create_session()
         os.makedirs(self.image_path, exist_ok=True)
+
+        # Removed ETACalculator instantiation
+        self.base_output_dir = cfg.get_output_dir() 
 
     def _create_session(self):
         session = requests.Session()
@@ -57,34 +61,50 @@ class ImageDownloader:
         session.mount('https://', adapter)
         return session
 
+    def _get_absolute_path_from_metadata(self, entry):
+        if 'relative_path' in entry:
+            return os.path.join(self.base_output_dir, entry['relative_path'])
+        return None
+
     def save_images(self, image_urls, keep_filenames):
         if not image_urls:
             logger.info("No image URLs provided.")
             return 0
 
-        metadata_file = cfg.get_image_metadata_file(self.category_dir, self.search_term)
+        metadata_file = cfg.get_image_metadata_file(self.category_dir, self.class_name)
         cache = load_json_data(metadata_file) or {}
+        
         cache.setdefault('image_cache', {})
         all_image_data = cache['image_cache']
 
-        all_verified = all(
-            url in all_image_data and
-            os.path.exists(all_image_data[url]['path']) and
-            hashlib.md5(open(all_image_data[url]['path'], 'rb').read()).hexdigest() == all_image_data[url]['hash']
-            for url in image_urls
-        )
+        urls_to_download = []
+        for url in image_urls:
+            entry = all_image_data.get(url)
+            if entry:
+                abs_path = self._get_absolute_path_from_metadata(entry)
+                if abs_path and os.path.exists(abs_path) and \
+                   verify_image_file(abs_path, entry.get('hash')):
+                    continue 
+            urls_to_download.append(url)
 
-        if all_verified and len(image_urls) > 0 :
-            logger.info(f"All {len(image_urls)} images already downloaded and verified for '{self.search_key_query}'.")
+        if not urls_to_download:
+            logger.info(f"All {len(image_urls)} images already downloaded and verified for '{self.class_name}'.")
+            cache['updated_at'] = datetime.now().isoformat()
+            if 'class_name' not in cache: 
+                 cache['class_name'] = self.class_name
+            save_json_data(metadata_file, cache)
             return 0
-
-        logger.start_progress(len(image_urls), f"Downloading images for '{self.search_key_query}'", self.worker_id)
+        
+        num_to_download_in_batch = len(urls_to_download)
+        logger.start_progress(num_to_download_in_batch, f"Downloading images for '{self.class_name}'", self.worker_id)
         saved_count = 0
 
-        for idx, url in enumerate(image_urls):
+        for idx, url in enumerate(urls_to_download):
             self.rate_limiter.wait()
-            logger.info(f"Downloading {idx+1}/{len(image_urls)}: {logger.truncate_url(url)}")
-
+            
+            items_processed_in_batch = idx
+            logger.info(f"Downloading {items_processed_in_batch + 1}/{num_to_download_in_batch}: {logger.truncate_url(url)}")
+            
             try:
                 headers = {
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
@@ -108,40 +128,39 @@ class ImageDownloader:
                     file_base_name = f"{self.clean_base}_{len(all_image_data)+1:03d}"
                 
                 filename = f"{file_base_name}.{img_format}"
-                path = os.path.join(self.image_path, filename)
-
-                if url in all_image_data and os.path.exists(all_image_data[url]['path']):
-                    with open(all_image_data[url]['path'], 'rb') as f_check:
-                        if hashlib.md5(f_check.read()).hexdigest() == all_image_data[url]['hash']:
-                            logger.info(f"Already downloaded and verified: {filename}")
-                            logger.update_progress(worker_id=self.worker_id)
-                            continue
-                        else:
-                            logger.warning(f"Hash mismatch for existing file: {filename}. Re-downloading.")
-
+                absolute_save_path = os.path.join(self.image_path, filename)
 
                 image_hash = hashlib.md5(content).hexdigest()
-                with open(path, 'wb') as f:
+                if url in all_image_data:
+                    existing_entry = all_image_data[url]
+                    existing_abs_path = self._get_absolute_path_from_metadata(existing_entry)
+                    if existing_abs_path and os.path.exists(existing_abs_path) and verify_image_file(existing_abs_path, image_hash):
+                        logger.info(f"Already downloaded and verified (re-check): {filename}")
+                        logger.update_progress(worker_id=self.worker_id)
+                        continue 
+
+                with open(absolute_save_path, 'wb') as f:
                     f.write(content)
 
-                if not verify_image_file(path, content):
-                    if os.path.exists(path):
-                        os.remove(path)
+                if not verify_image_file(absolute_save_path, image_hash): 
+                    if os.path.exists(absolute_save_path):
+                        os.remove(absolute_save_path)
                     raise Exception("File integrity verification failed after saving.")
-
+                relative_image_path = os.path.relpath(absolute_save_path, self.base_output_dir).replace('\\', '/')
+                
                 all_image_data[url] = {
                     'filename': filename,
                     'hash': image_hash,
-                    'path': path,
+                    'relative_path': relative_image_path,
                     'format': img_format,
-                    'size': len(content),
-                    'download_time': time.time()
+                    'size': len(content)
                 }
 
                 cache.update({
                     'image_cache': all_image_data,
-                    'search_key': self.search_key_query,
-                    'download_completed': time.time()
+                    'class_name': self.class_name,
+                    'created_at': datetime.now().isoformat(),
+                    'updated_at': datetime.now().isoformat()
                 })
                 save_json_data(metadata_file, cache)
                 logger.info(f"Saved: {filename}")
@@ -150,15 +169,29 @@ class ImageDownloader:
 
             except requests.exceptions.RequestException as e:
                 logger.error(f"Network error for {logger.truncate_url(url)}: {e}")
+                logger.update_progress(worker_id=self.worker_id) 
             except UnidentifiedImageError:
                 logger.error(f"Invalid image data: {logger.truncate_url(url)}")
+                logger.update_progress(worker_id=self.worker_id)
             except Exception as e:
                 logger.error(f"Failed to save {logger.truncate_url(url)}: {e}")
+                logger.update_progress(worker_id=self.worker_id)
 
         logger.complete_progress(worker_id=self.worker_id)
         if saved_count > 0:
-            logger.success(f"Downloaded {saved_count} new images for '{self.search_key_query}'.")
-        else:
-            logger.warning(f"No new images added for '{self.search_key_query}'.")
-        logger.info(f"Total in metadata for '{self.search_key_query}': {len(all_image_data)}")
+            logger.success(f"Downloaded {saved_count} new images for '{self.class_name}'.")
+        elif num_to_download_in_batch > 0 : 
+             logger.warning(f"Attempted to download {num_to_download_in_batch} images for '{self.class_name}', but {saved_count} were saved.")
+        else: 
+            logger.warning(f"No new images were processed for '{self.class_name}'.")
+        
+        logger.info(f"Total in metadata for '{self.class_name}': {len(all_image_data)}")
+        
+        cache['updated_at'] = datetime.now().isoformat()
+        if saved_count > 0 or num_to_download_in_batch > 0 : 
+            cache['created_at'] = datetime.now().isoformat()
+        if 'class_name' not in cache: 
+            cache['class_name'] = self.class_name
+        save_json_data(metadata_file, cache)
+        
         return saved_count
