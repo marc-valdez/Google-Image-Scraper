@@ -28,7 +28,6 @@ class UrlFetcher:
         self.target_images = cfg.NUM_IMAGES_PER_CLASS
         self.cache_file_path = cfg.get_url_cache_file(category_dir, search_term)
         
-        # Construct the Google Images search URL based on user's example and config
         params = {
             "as_st": "y",   # Advanced search type
             "tbm": "isch",  # Crucial for image search
@@ -63,10 +62,10 @@ class UrlFetcher:
             if len(found_urls) >= self.target_images:
                 logger.success(f"[Worker {self.worker_id}] Loaded {self.target_images} cached image URLs for '{self.search_key_query}'.")
                 return found_urls[:self.target_images]
-            logger.info(f"[Worker {self.worker_id}] Found {len(found_urls)} cached URLs for '{self.search_key_query}'. Need {self.target_images - len(found_urls)} more.")
+            logger.info(f"[Worker {self.worker_id}] Found {len(found_urls)} cached URLs. Need {self.target_images - len(found_urls)} more.")
 
         if not self.driver:
-            logger.error(f"[Worker {self.worker_id}] WebDriver not initialized. Cannot fetch URLs for '{self.search_key_query}'.")
+            logger.error(f"[Worker {self.worker_id}] WebDriver not initialized.")
             return found_urls
 
         try:
@@ -75,125 +74,98 @@ class UrlFetcher:
                 EC.presence_of_element_located((By.TAG_NAME, "img"))
             )
         except TimeoutException:
-            logger.error(f"[Worker {self.worker_id}] Timeout loading initial image search page for '{self.search_key_query}'. URL: {self.search_url}")
+            logger.error(f"[Worker {self.worker_id}] Timeout loading initial image search page. URL: {self.search_url}")
             return found_urls
         except WebDriverException as e:
-            logger.error(f"[Worker {self.worker_id}] WebDriver error on initial page load for '{self.search_key_query}': {e}. URL: {self.search_url}")
+            logger.error(f"[Worker {self.worker_id}] WebDriver error on initial page load: {e}. URL: {self.search_url}")
             return found_urls
-
 
         needed_urls = self.target_images - len(found_urls)
         if needed_urls <= 0:
-             logger.info(f"[Worker {self.worker_id}] All required images already found for '{self.search_key_query}'.")
+             logger.info(f"[Worker {self.worker_id}] All required images already found.")
              return found_urls[:self.target_images]
 
         logger.start_progress(needed_urls, f"Finding images for '{self.search_key_query}'", self.worker_id)
         
-        high_res_image_selectors = [
-            "//img[@class='sFlh5c pT0Scc iPVvYb']",
-            "//img[@class='sFlh5c pT0Scc']",
-            "//img[contains(@class, 'n3VNCb')]",
-        ]
+        high_res_image_selectors = ["n3VNCb", "iPVvYb", "r48jcc", "pT0Scc", "H8Rx8c"]
 
         processed_thumbnails = 0
         consecutive_misses = 0
         
         while len(found_urls) < self.target_images and consecutive_misses < cfg.MAX_MISSED:
-            current_thumbnail_index = processed_thumbnails + 1
-            thumbnail_clicked = False
+            current_thumbnail_idx = processed_thumbnails + 1 
             
             try:
-                thumbnail_xpath = f"(//div[contains(@class,'isv-r')])[{current_thumbnail_index}]//a[1]"
+                thumbnail_xpath = f'//*[@id="rso"]/div/div/div[1]/div/div/div[{current_thumbnail_idx}]/div[2]/h3/a/div/div/div/g-img'
                 
-                img_thumbnail_element = WebDriverWait(self.driver, cfg.SCROLL_PAUSE_TIME).until(
+                img_thumbnail_element = WebDriverWait(self.driver, 5).until(
                     EC.presence_of_element_located((By.XPATH, thumbnail_xpath))
                 )
-                self.driver.execute_script("arguments[0].scrollIntoView({block:'center', inline:'center'});", img_thumbnail_element)
-                time.sleep(cfg.SCROLL_PAUSE_TIME / 2)
-
+                self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", img_thumbnail_element)
                 try:
-                    WebDriverWait(self.driver, cfg.SCROLL_PAUSE_TIME).until(EC.element_to_be_clickable((By.XPATH, thumbnail_xpath))).click()
-                    thumbnail_clicked = True
-                except (TimeoutException, StaleElementReferenceException):
-                    try: 
-                        self.driver.execute_script("arguments[0].click();", img_thumbnail_element)
-                        thumbnail_clicked = True
-                    except Exception as e_js_click:
-                        logger.error(f"[Worker {self.worker_id}] JS click failed for thumbnail {current_thumbnail_index}: {e_js_click}")
-                        processed_thumbnails += 1
-                        consecutive_misses +=1
-                        continue
+                    WebDriverWait(self.driver, 2).until(EC.element_to_be_clickable((By.XPATH, thumbnail_xpath)))
+                    img_thumbnail_element.click()
+                except WebDriverException:
+                    self.driver.execute_script("arguments[0].click();", img_thumbnail_element)
+                
+                time.sleep(random.uniform(1.0, 2.0))
 
-                if not thumbnail_clicked:
-                    processed_thumbnails += 1
-                    consecutive_misses +=1
-                    continue
-
-                time.sleep(cfg.SCROLL_PAUSE_TIME)
-
-                extracted_this_round = False
-                for selector in high_res_image_selectors:
-                    try:
-                        img_elements = WebDriverWait(self.driver, cfg.SCROLL_PAUSE_TIME).until(
-                            EC.presence_of_all_elements_located((By.XPATH, selector))
-                        )
-                        for el in img_elements:
-                            src = el.get_attribute("src")
-                            if src and src.startswith("http") and "encrypted-tbn0.gstatic.com" not in src and src not in found_urls:
-                                found_urls.append(src)
-                                logger.info(f"[Worker {self.worker_id}] Image {len(found_urls)}/{self.target_images}: {logger.truncate_url(src)}")
-                                logger.update_progress(worker_id=self.worker_id)
-                                extracted_this_round = True
-                                if len(found_urls) >= self.target_images: break
-                        if extracted_this_round and len(found_urls) >= self.target_images: break
-                    except TimeoutException:
-                        logger.error(f"[Worker {self.worker_id}] Timeout waiting for high-res image with selector: {selector}")
-                    except StaleElementReferenceException:
-                        logger.error(f"[Worker {self.worker_id}] Stale element with selector: {selector}")
-
-
-                if extracted_this_round:
-                    save_json_data(self.cache_file_path, {
-                        'search_url_used': self.search_url, 
-                        'search_key': self.search_key_query, 
-                        'number_of_images_requested': self.target_images,
-                        'urls_found_count': len(found_urls),
-                        'urls': found_urls
-                    })
+                image_found_this_iteration = False
+                for cls in high_res_image_selectors:
+                    for el in self.driver.find_elements(By.CLASS_NAME, cls):
+                        src = el.get_attribute("src")
+                        if src and "http" in src and "encrypted" not in src and src not in found_urls:
+                            found_urls.append(src)
+                            logger.info(f"[Worker {self.worker_id}] Image {len(found_urls)}/{self.target_images}: {logger.truncate_url(src)}")
+                            logger.update_progress(worker_id=self.worker_id)
+                            
+                            save_json_data(self.cache_file_path, {
+                                'search_url_used': self.search_url, 
+                                'search_key': self.search_key_query, 
+                                'number_of_images_requested': self.target_images,
+                                'urls_found_count': len(found_urls),
+                                'urls': found_urls
+                            })
+                            image_found_this_iteration = True
+                            if len(found_urls) >= self.target_images: break
+                    if image_found_this_iteration and len(found_urls) >= self.target_images: break
+                
+                if image_found_this_iteration:
                     consecutive_misses = 0
-                else:
-                    consecutive_misses += 1
-                    logger.error(f"[Worker {self.worker_id}] No new high-res URL found for thumbnail {current_thumbnail_index}. Misses: {consecutive_misses}")
-
                 processed_thumbnails += 1
 
-                if processed_thumbnails % cfg.BROWSER_REFRESH_INTERVAL == 0 :
+                if processed_thumbnails % 5 == 0:
+                    self.driver.execute_script(f"window.scrollBy(0, {random.randint(400, 600)});")
+                    time.sleep(random.uniform(0.3, 0.7))
+                
+                if processed_thumbnails % 15 == 0:
                     try:
-                        show_more_button = self.driver.find_element(By.XPATH, "//input[@type='button'][@value='Show more results']")
-                        if show_more_button.is_displayed() and show_more_button.is_enabled():
+                        btn = self.driver.find_element(By.CLASS_NAME, "mye4qd")
+                        if btn.is_displayed() and btn.is_enabled():
                             logger.info(f"[Worker {self.worker_id}] Clicking 'Show more results' button.")
-                            self.driver.execute_script("arguments[0].click();", show_more_button)
-                            time.sleep(cfg.LOAD_BUTTON_WAIT)
-                            consecutive_misses = 0
+                            btn.click()
+                            time.sleep(3)
                     except NoSuchElementException:
-                        logger.error(f"[Worker {self.worker_id}] 'Show more results' button not found or not needed yet.")
+                        logger.debug(f"[Worker {self.worker_id}] 'Show more results' button (mye4qd) not found.")
                     except Exception as e_sm:
                         logger.warning(f"[Worker {self.worker_id}] Error clicking 'Show more results': {e_sm}")
-                
-                self.driver.execute_script(f"window.scrollBy(0, {random.randint(600, 900)});")
-                time.sleep(cfg.SCROLL_PAUSE_TIME / 2)
-
-            except (NoSuchElementException, StaleElementReferenceException, TimeoutException) as e_thumb:
-                logger.warning(f"[Worker {self.worker_id}] Error processing thumbnail {current_thumbnail_index}: {type(e_thumb).__name__}. Misses: {consecutive_misses}")
+            
+            except TimeoutException: 
+                logger.warning(f"[Worker {self.worker_id}] Timeout finding/clicking thumbnail {current_thumbnail_idx}. Misses: {consecutive_misses+1}")
+                consecutive_misses += 1
+                self.driver.execute_script(f"window.scrollBy(0, {random.randint(1000, 1500)});")
+                time.sleep(exponential_backoff(consecutive_misses, base=0.5, max_d=cfg.SCROLL_PAUSE_TIME * 2))
+            except (NoSuchElementException, StaleElementReferenceException) as e_thumb:
+                logger.warning(f"[Worker {self.worker_id}] Error processing thumbnail {current_thumbnail_idx}: {type(e_thumb).__name__}. Misses: {consecutive_misses+1}")
                 consecutive_misses += 1
                 self.driver.execute_script(f"window.scrollBy(0, {random.randint(1000, 1500)});")
                 time.sleep(exponential_backoff(consecutive_misses, base=0.5, max_d=cfg.SCROLL_PAUSE_TIME * 2))
             except WebDriverException as e_wd:
-                logger.error(f"[Worker {self.worker_id}] WebDriverException: {e_wd}. Misses: {consecutive_misses}")
+                logger.error(f"[Worker {self.worker_id}] WebDriverException: {e_wd}. Misses: {consecutive_misses+1}")
                 consecutive_misses += 1
                 time.sleep(exponential_backoff(consecutive_misses, base=1, max_d=cfg.MAX_RETRY_DELAY / 2))
             except Exception as e_main:
-                logger.error(f"[Worker {self.worker_id}] Unexpected error in main loop: {e_main}. Misses: {consecutive_misses}")
+                logger.error(f"[Worker {self.worker_id}] Unexpected error in main loop: {e_main}. Misses: {consecutive_misses+1}")
                 consecutive_misses += 1
                 time.sleep(exponential_backoff(consecutive_misses))
 
@@ -201,7 +173,7 @@ class UrlFetcher:
         if len(found_urls) >= self.target_images:
             logger.success(f"[Worker {self.worker_id}] Successfully found {self.target_images} image URLs for '{self.search_key_query}'.")
         else:
-            logger.warning(f"[Worker {self.worker_id}] Found {len(found_urls)} out of {self.target_images} desired URLs for '{self.search_key_query}' after {cfg.MAX_MISSED} consecutive misses or exhausting content.")
+            logger.warning(f"[Worker {self.worker_id}] Found {len(found_urls)}/{self.target_images} URLs for '{self.search_key_query}' after {cfg.MAX_MISSED} misses or exhausting content.")
         
         return found_urls[:self.target_images]
 
