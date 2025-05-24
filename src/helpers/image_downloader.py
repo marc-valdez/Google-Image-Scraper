@@ -4,6 +4,7 @@ import time
 import hashlib
 import random
 from PIL import Image, UnidentifiedImageError
+from PIL import ExifTags
 from urllib.parse import urlparse
 from requests.adapters import HTTPAdapter
 from urllib3 import Retry
@@ -106,8 +107,8 @@ class ImageDownloader:
                     exif = img._getexif()
                     if exif:
                         for k, v in exif.items():
-                            if k in Image.TAGS:
-                                exif_data[Image.TAGS[k]] = v if isinstance(v, (str, int, float, bool)) else str(v)
+                            if k in ExifTags.TAGS:
+                                exif_data[ExifTags.TAGS[k]] = v if isinstance(v, (str, int, float, bool)) else str(v)
         except UnidentifiedImageError:
             logger.warning(f"Could not identify image from URL (falling back to extension): {logger.truncate_url(url)}")
             ext = os.path.splitext(urlparse(url).path)[1][1:].lower()
