@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 from requests.adapters import HTTPAdapter
 from urllib3 import Retry
 import requests
+import certifi
 from datetime import datetime
 
 from src.logging.logger import logger
@@ -55,6 +56,7 @@ class ImageDownloader:
         adapter = HTTPAdapter(max_retries=retries, pool_connections=10, pool_maxsize=50)
         session.mount('http://', adapter)
         session.mount('https://', adapter)
+        session.verify = certifi.where()
         return session
 
     def _get_absolute_path_from_metadata(self, entry):
