@@ -78,26 +78,58 @@ class ImageDownloader:
         return urls_to_download
 
     def _fetch_image_content(self, url: str) -> tuple[bytes | None, requests.Response | None]:
-        try:
-            user_agent_to_use = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36" # Default
-            if cfg.ROTATE_USER_AGENT and cfg.USER_AGENTS:
-                user_agent_to_use = random.choice(cfg.USER_AGENTS)
-                logger.info(f"[Worker {self.worker_id}] ImageDownloader using User-Agent: {user_agent_to_use}")
+        default_user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        user_agents_to_try = []
 
-            headers = {
-                "User-Agent": user_agent_to_use,
-                "Referer": url
-            }
-            response = self.session.get(url, headers=headers, timeout=cfg.CONNECTION_TIMEOUT)
-            response.raise_for_status()
-            return response.content, response
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Network error for {logger.truncate_url(url)}: {e}")
-            return None, None
+        if cfg.ROTATE_USER_AGENT and hasattr(cfg, 'USER_AGENTS') and cfg.USER_AGENTS:
+            user_agents_to_try = random.sample(list(cfg.USER_AGENTS), k=len(cfg.USER_AGENTS))
+        
+        if not user_agents_to_try:
+            user_agents_to_try = [default_user_agent]
+
+        last_error_for_url = None
+        
+        ua_cycle_errors = getattr(cfg, 'USER_AGENT_CYCLE_ON_ERRORS', [403])
+        ua_cycle_delay = getattr(cfg, 'RETRY_BACKOFF_FOR_UA_ROTATE', 2.0)
+
+        for i, user_agent in enumerate(user_agents_to_try):
+            logger.info(f"[Worker {self.worker_id}] Attempt {i + 1}/{len(user_agents_to_try)} for {logger.truncate_url(url)} with UA: {user_agent}")
+            headers = {"User-Agent": user_agent, "Referer": url}
+            
+            try:
+                response = self.session.get(url, headers=headers, timeout=cfg.CONNECTION_TIMEOUT)
+                response.raise_for_status()
+                return response.content, response
+            except requests.exceptions.HTTPError as http_err:
+                last_error_for_url = http_err
+                status_code = http_err.response.status_code
+                if status_code in ua_cycle_errors:
+                    logger.warning(f"[Worker {self.worker_id}] HTTP {status_code} for {logger.truncate_url(url)} with UA: {user_agent}.")
+                    if i < len(user_agents_to_try) - 1:
+                        logger.info(f"Retrying with next User-Agent after {ua_cycle_delay}s delay.")
+                        time.sleep(ua_cycle_delay)
+                        continue
+                    else:
+                        logger.error(f"All {len(user_agents_to_try)} User-Agent attempts for {logger.truncate_url(url)} failed with HTTP {status_code}.")
+                        break 
+                else:
+                    logger.error(f"HTTP error {status_code} for {logger.truncate_url(url)} (not in UA cycle list) with UA: {user_agent}: {http_err}")
+                    return None, None 
+            except requests.exceptions.RequestException as req_err:
+                last_error_for_url = req_err
+                logger.error(f"Network error for {logger.truncate_url(url)} with UA: {user_agent}: {req_err}")
+                return None, None
+
+        if last_error_for_url:
+            logger.error(f"Failed to fetch {logger.truncate_url(url)} after {len(user_agents_to_try)} UA attempt(s). Last error: {last_error_for_url}")
+        else:
+            logger.error(f"Failed to fetch {logger.truncate_url(url)} (no attempts made or no specific last error recorded from loop).")
+            
+        return None, None
 
     def _extract_image_details(self, content: bytes, url: str, original_filename_from_url: str, keep_filenames: bool, current_image_count: int) -> tuple[str, str, dict]:
         exif_data = {}
-        img_format = 'jpg' # Default format
+        img_format = 'jpg' 
 
         try:
             with Image.open(io.BytesIO(content)) as img:
@@ -144,7 +176,7 @@ class ImageDownloader:
             return True
         except Exception as e:
             logger.error(f"Failed to save or verify image {absolute_save_path}: {e}")
-            if os.path.exists(absolute_save_path): # Attempt cleanup if save failed mid-way or verification failed
+            if os.path.exists(absolute_save_path): 
                 try:
                     os.remove(absolute_save_path)
                 except Exception as rem_e:
@@ -194,24 +226,19 @@ class ImageDownloader:
         image_hash = hashlib.md5(content).hexdigest()
         current_time_iso = datetime.now().isoformat()
 
-        # Check if this exact content (based on new hash) already exists and is verified
         if url in all_image_data:
             existing_entry = all_image_data[url]
             existing_abs_path = self._get_absolute_path_from_metadata(existing_entry)
             if existing_abs_path and os.path.exists(existing_abs_path) and verify_image_file(existing_abs_path, image_hash):
                 self._handle_existing_verified_image(url, existing_entry, image_hash, metadata_file, cache, current_time_iso)
-                return False # Not a new save, but metadata might have been updated
+                return False 
 
-        # Determine filename and extract details
-        # Pass len(all_image_data) for consistent numbering if a new image is added
         filename, img_format, exif_data = self._extract_image_details(content, url, original_filename_from_url, keep_filenames, len(all_image_data))
         absolute_save_path = os.path.join(self.image_path, filename)
 
-        # Save and verify
         if not self._save_and_verify_image(content, absolute_save_path, image_hash):
-            return False # Save or verification failed
+            return False 
 
-        # Update metadata
         relative_image_path = os.path.relpath(absolute_save_path, self.base_output_dir).replace('\\', '/')
         all_image_data[url] = self._update_metadata_entry(
             url, filename, original_filename_from_url, image_hash,
@@ -260,7 +287,7 @@ class ImageDownloader:
             try:
                 if self._process_single_image_download(url, all_image_data, keep_filenames, metadata_file, cache):
                     saved_count += 1
-            except Exception as e: # Catch-all for unexpected errors during single image processing
+            except Exception as e: 
                 logger.error(f"Unexpected error processing {logger.truncate_url(url)}: {e}")
             finally:
                 logger.update_progress(worker_id=self.worker_id)

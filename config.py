@@ -41,6 +41,8 @@ USER_AGENTS = [
     "Mozilla/5.0 (X11; Fedora; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/109.0",
 ]
 ROTATE_USER_AGENT = True
+USER_AGENT_CYCLE_ON_ERRORS = [400, 403, 429] # Define which HTTP status codes should trigger a User-Agent cycle attempt
+RETRY_BACKOFF_FOR_UA_ROTATE = 2.0 # Delay in seconds before retrying with a new User-Agent after an error in USER_AGENT_CYCLE_ON_ERRORS
 
 # Google Search Query Parameters:
 SEARCH_QUERY_EXACT_PHRASE = ""            # as_epq
