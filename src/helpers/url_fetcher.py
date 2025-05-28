@@ -30,6 +30,7 @@ class UrlFetcher:
         
         self.current_xpath_index = 1 
         self.consecutive_misses = 0
+        self.consecutive_high_res_failures = 0
         
         params = {
             "as_st": "y",   # Advanced search type
@@ -50,27 +51,6 @@ class UrlFetcher:
         }
         params = {k: v for k, v in params.items() if v != ""}
         self.search_url = f"https://www.google.com/search?{urllib.parse.urlencode(params)}"
-
-    def _is_related_searches_block(self, item_element, xpath_index_being_checked: int) -> bool:
-        """Checks if the item_element is a 'Related searches' block and handles associated actions."""
-        try:
-            item_classes = item_element.get_attribute("class")
-            if item_classes and "BA0zte" in item_classes.split():
-                is_related = True
-            else:
-                item_element.find_element(By.CLASS_NAME, "BA0zte") # Will raise NoSuchElementException if not found
-                is_related = True
-            
-            if is_related:
-                logger.info(f"[Worker {self.worker_id}] Identified 'Related searches' block at index {xpath_index_being_checked}. Skipping.")
-                self.driver.execute_script(f"window.scrollBy(0, {random.randint(50, 150)});") 
-                time.sleep(random.uniform(0.1, 0.3))
-                return True
-        except NoSuchElementException:
-            return False 
-        except Exception as e_related_check: 
-            logger.warning(f"[Worker {self.worker_id}] Error checking if item {xpath_index_being_checked} is related block: {e_related_check}")
-        return False
 
     def _handle_item_error(self, message: str, scroll_min=200, scroll_max=400, backoff_base=0.5, backoff_max_d_mult=1):
         """Handles logging, miss counting, scrolling, and delay for item processing errors."""
@@ -116,27 +96,43 @@ class UrlFetcher:
         if len(found_urls) > 0:
             logger.update_progress(advance=len(found_urls), worker_id=self.worker_id)
         
-        self.consecutive_misses = 0 # Reset for this fetching session
+        self.consecutive_misses = 0
+        self.consecutive_high_res_failures = 0
         high_res_image_selectors = ["n3VNCb", "iPVvYb", "r48jcc", "pT0Scc", "H8Rx8c"]
         
         while len(found_urls) < self.images_requested and self.consecutive_misses < cfg.MAX_MISSED:
-            item_element = None
+            item_xpath = f'//*[@id="rso"]/div/div/div[1]/div/div/div[{self.current_xpath_index}]'
             try:
-                item_xpath = f'//*[@id="rso"]/div/div/div[1]/div/div/div[{self.current_xpath_index}]'
-                item_element = WebDriverWait(self.driver, 5).until(EC.presence_of_element_located((By.XPATH, item_xpath)))
+                item_element = WebDriverWait(self.driver, 5).until(
+                    EC.presence_of_element_located((By.XPATH, item_xpath))
+                )
 
-                if self._is_related_searches_block(item_element, self.current_xpath_index):
-                    continue # Index will be incremented in finally
+                # Skip if this is a related searches block
+                item_classes = item_element.get_attribute("class") or ""
+                if "BA0zte" in item_classes.split():
+                    logger.info(f"[Worker {self.worker_id}] Skipping related searches block at index {self.current_xpath_index}.")
+                    self.driver.execute_script(f"window.scrollBy(0, {random.randint(50, 150)});") 
+                    time.sleep(random.uniform(0.1, 0.3))
+                    self.current_xpath_index += 1
+                    continue
 
-                img_thumbnail_element = item_element.find_element(By.XPATH, "./div[2]/h3/a/div/div/div/g-img")
-                
-                self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", img_thumbnail_element)
+                # Skip if this item does not contain a g-img
                 try:
-                    WebDriverWait(item_element, 2).until(EC.element_to_be_clickable((By.XPATH, "./div[2]/h3/a/div/div/div/g-img"))).click()
+                    img_thumbnail_element = item_element.find_element(By.XPATH, ".//g-img")
+                except NoSuchElementException:
+                    raise NoSuchElementException("No g-img found in item")
+
+                self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", img_thumbnail_element)
+
+                # Try clicking the thumbnail
+                try:
+                    WebDriverWait(item_element, 2).until(
+                        EC.element_to_be_clickable((By.XPATH, ".//g-img"))
+                    ).click()
                 except WebDriverException:
                     self.driver.execute_script("arguments[0].click();", img_thumbnail_element)
-                
-                time.sleep(random.uniform(1.0, 3.0)) # Wait for high-res image panel
+
+                time.sleep(random.uniform(1.0, 3.0))  # Wait for high-res image panel
 
                 image_found_this_iteration = False
                 for cls in high_res_image_selectors:
@@ -144,65 +140,68 @@ class UrlFetcher:
                         src = el.get_attribute("src")
                         if src and "http" in src and "encrypted" not in src and src not in found_urls:
                             found_urls.append(src)
-                            logger.info(f"[Worker {self.worker_id}] Image {len(found_urls)}/{self.images_requested}: {logger.truncate_url(src)}")
+                            logger.info(
+                                f"[Worker {self.worker_id}] Image {len(found_urls)}/{self.images_requested}: {logger.truncate_url(src)}"
+                            )
                             logger.update_progress(worker_id=self.worker_id)
-                            
-                            self.consecutive_misses = 0 # Reset on success
+
+                            self.consecutive_misses = 0
+                            self.consecutive_high_res_failures = 0
                             image_found_this_iteration = True
-                            
+
                             save_json_data(self.cache_file_path, {
-                                'search_url_used': self.search_url, 'search_key': self.query,
+                                'search_url_used': self.search_url,
+                                'search_key': self.query,
+                                'last_processed_xpath_index': self.current_xpath_index,
                                 'number_of_images_requested': self.images_requested,
                                 'number_of_urls_found': len(found_urls),
-                                'last_processed_xpath_index': self.current_xpath_index,
-                                'request_efficiency': self.images_requested / len(found_urls) if len(found_urls) else 0,
+                                'request_efficiency': len(found_urls) / self.images_requested,
                                 'urls': found_urls
                             })
-                            if len(found_urls) >= self.images_requested: break
-                    if image_found_this_iteration and len(found_urls) >= self.images_requested: break
-                
+
+                            if len(found_urls) >= self.images_requested:
+                                break
+                    if image_found_this_iteration:
+                        break
+
                 if not image_found_this_iteration:
-                    self._handle_item_error(
-                        f"[Worker {self.worker_id}] No valid high-res URL from item at index {self.current_xpath_index}. Misses: {self.consecutive_misses + 1}",
-                        scroll_min=100, scroll_max=200, backoff_base=0.2, backoff_max_d_mult=0.5
+                    self.consecutive_high_res_failures += 1
+                    logger.warning(
+                        f"[Worker {self.worker_id}] No valid high-res URL from item at index {self.current_xpath_index}. "
+                        f"Consecutive high-res failures: {self.consecutive_high_res_failures}/{cfg.MAX_CONSECUTIVE_HIGH_RES_FAILURES}."
                     )
+                    if self.consecutive_high_res_failures >= cfg.MAX_CONSECUTIVE_HIGH_RES_FAILURES:
+                        logger.warning(
+                            f"[Worker {self.worker_id}] Reached max ({cfg.MAX_CONSECUTIVE_HIGH_RES_FAILURES}) "
+                            f"consecutive high-res URL failures. Stopping URL search for '{self.query}'."
+                        )
+                        break
+                    else:
+                        self.driver.execute_script(f"window.scrollBy(0, {random.randint(100, 200)});")
+                        time.sleep(exponential_backoff(self.consecutive_high_res_failures, base=0.2, max_d=cfg.SCROLL_PAUSE_TIME * 0.5))
 
                 if self.current_xpath_index % 5 == 0:
                     self.driver.execute_script(f"window.scrollBy(0, {random.randint(400, 600)});")
                     time.sleep(random.uniform(0.3, 0.7))
 
-            except TimeoutException: # Timeout getting item_element
+            except (TimeoutException, NoSuchElementException, StaleElementReferenceException, WebDriverException) as e:
                 self._handle_item_error(
-                    f"[Worker {self.worker_id}] Timeout waiting for item at index {self.current_xpath_index}. Misses: {self.consecutive_misses + 1}",
-                    scroll_min=500, scroll_max=800, backoff_max_d_mult=1
-                )
-            except NoSuchElementException: # E.g. no g-img found after not being related_searches
-                self._handle_item_error(
-                    f"[Worker {self.worker_id}] Item at index {self.current_xpath_index} not related/g-img. Misses: {self.consecutive_misses + 1}"
-                )
-            except StaleElementReferenceException:
-                 self._handle_item_error(
-                    f"[Worker {self.worker_id}] Stale element reference for index {self.current_xpath_index}. Misses: {self.consecutive_misses + 1}",
-                    scroll_min=500, scroll_max=1000, backoff_max_d_mult=1.5
-                )
-            except WebDriverException as e_wd:
-                self._handle_item_error(
-                    f"[Worker {self.worker_id}] WebDriverException for index {self.current_xpath_index}: {e_wd}. Misses: {self.consecutive_misses + 1}",
-                    scroll_min=300, scroll_max=600, backoff_base=1, backoff_max_d_mult=cfg.MAX_RETRY_DELAY / (2*1) if cfg.MAX_RETRY_DELAY else 2
+                    f"[Worker {self.worker_id}] {type(e).__name__} at index {self.current_xpath_index}: {str(e)}. Misses: {self.consecutive_misses + 1}",
+                    scroll_min=300, scroll_max=800, backoff_base=0.5, backoff_max_d_mult=1.5
                 )
             except Exception as e_main:
                 self._handle_item_error(
-                    f"[Worker {self.worker_id}] Unexpected error for index {self.current_xpath_index}: {e_main}. Misses: {self.consecutive_misses + 1}",
+                    f"[Worker {self.worker_id}] Unexpected error at index {self.current_xpath_index}: {str(e_main)}. Misses: {self.consecutive_misses + 1}",
                     scroll_min=300, scroll_max=600, backoff_base=0.8, backoff_max_d_mult=1.5
                 )
             finally:
                 self.current_xpath_index += 1
-        
+
         logger.complete_progress(worker_id=self.worker_id)
         if len(found_urls) >= self.images_requested:
             logger.success(f"[Worker {self.worker_id}] Successfully found {self.images_requested} image URLs for '{self.query}'.")
         else:
-            logger.warning(f"[Worker {self.worker_id}] Found {len(found_urls)}/{self.images_requested} URLs for '{self.query}' after {self.consecutive_misses} misses or exhausting content.")
+            logger.warning(f"[Worker {self.worker_id}] Found {len(found_urls)}/{self.images_requested} URLs for '{self.query}' after {self.consecutive_misses} general misses or {self.consecutive_high_res_failures} high-res misses, or exhausting content.")
         
         return found_urls[:self.images_requested]
 
