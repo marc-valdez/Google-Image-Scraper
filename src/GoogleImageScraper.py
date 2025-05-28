@@ -56,8 +56,8 @@ class GoogleImageScraper:
 
         logger.status(f"[Worker {self.worker_id}] Downloading {len(image_urls)} images for '{self.query}'")
         saved_count = self.image_downloader.save_images(
-            image_urls=image_urls,
-            keep_filenames=cfg.KEEP_FILENAMES
+            image_urls,
+            cfg.KEEP_FILENAMES
         )
         if saved_count > 0:
             logger.success(f"[Worker {self.worker_id}] Downloaded {saved_count} new images for '{self.query}'")
