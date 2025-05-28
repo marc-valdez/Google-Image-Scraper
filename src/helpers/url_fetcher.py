@@ -57,7 +57,7 @@ class UrlFetcher:
         
         if cache_data and cache_data.get('search_url_used') == self.search_url:
             found_urls = list(dict.fromkeys(cache_data.get('urls', [])))
-            processed_thumbnails_start_index = cache_data.get('processed_thumbnails_count', 0)
+            processed_thumbnails_start_index = cache_data.get('number_of_processed_thumbnails', 0)
             if processed_thumbnails_start_index > 0:
                 logger.info(f"[Worker {self.worker_id}] Resuming, previously processed {processed_thumbnails_start_index} thumbnails.")
 
@@ -71,8 +71,6 @@ class UrlFetcher:
             return found_urls
 
         try:
-            # Instead of self.driver.get, we might need to open a new tab if reusing a driver
-            # For now, let's assume each task gets a fresh navigation on the shared driver
             self.driver.get(self.search_url)
             WebDriverWait(self.driver, cfg.PAGE_LOAD_TIMEOUT).until(
                 EC.presence_of_element_located((By.TAG_NAME, "img"))
@@ -162,19 +160,57 @@ class UrlFetcher:
                             found_urls.append(src)
                             logger.info(f"[Worker {self.worker_id}] Image {len(found_urls)}/{self.target_images}: {logger.truncate_url(src)}")
                             logger.update_progress(worker_id=self.worker_id) 
-                            
+
+                            urls_found = len(found_urls)
+                            images_requested = self.target_images
+
+                            '''
+                            This measures how many images were requested for every image actually found. 
+                            A value of 1 means the target number of URLs was found. Values >1 indicate a shortfall.
+                            '''
+                            request_efficiency = (
+                                images_requested / urls_found
+                                if urls_found else 0
+                            )
+
+                            '''
+                            This indicates the number of thumbnails processed per image initially targeted.
+                            It reflects the effort relative to the goal, not necessarily the success in achieving it.
+                            '''
+                            processing_efficiency = (
+                                processed_thumbnails / images_requested
+                                if images_requested else 0
+                            )
+
+                            '''
+                            This calculates the average number of thumbnails processed to find one valid image URL. 
+                            A lower value is better, signifying higher efficiency in converting a thumbnail interaction into a usable URL.
+                            '''
+                            conversion_rate = (
+                                processed_thumbnails / urls_found
+                                if urls_found else 0
+                            )
+
                             save_json_data(self.cache_file_path, {
-                                'search_url_used': self.search_url, 
-                                'search_key': self.query, 
-                                'number_of_images_requested': self.target_images,
-                                'urls_found_count': len(found_urls),
+                                'search_url_used': self.search_url,
+                                'search_key': self.query,
+                                'number_of_images_requested': images_requested,
+                                'number_of_processed_thumbnails': processed_thumbnails, # Can serve as index when resuming
+                                'number_of_urls_found': urls_found,
+                                'statistics': {
+                                    'request_efficiency': request_efficiency,
+                                    'processing_efficiency': processing_efficiency,
+                                    'conversion_rate': conversion_rate
+                                },
                                 'urls': found_urls,
-                                'processed_thumbnails_count': processed_thumbnails # Save current progress
                             })
+
                             image_found_this_iteration = True
-                            if len(found_urls) >= self.target_images: break
-                    if image_found_this_iteration and len(found_urls) >= self.target_images: break
-                
+                            if len(found_urls) >= self.target_images:
+                                break
+                    if image_found_this_iteration and len(found_urls) >= self.target_images:
+                        break
+
                 if image_found_this_iteration:
                     consecutive_misses = 0
                 processed_thumbnails += 1
