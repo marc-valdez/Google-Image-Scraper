@@ -3,13 +3,13 @@ import os
 import fnmatch
 import sys
 import uuid
-import config as cfg
 
 # Add project root to sys.path to allow for src.logging.logger import
 project_root_for_import = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if project_root_for_import not in sys.path:
     sys.path.insert(0, project_root_for_import)
 
+import config as cfg
 from src.logging.logger import logger
 
 def find_files(directory, pattern):

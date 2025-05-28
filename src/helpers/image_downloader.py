@@ -121,7 +121,7 @@ class ImageDownloader:
 
     def _metadata(self, fname, orig, hash_, rel, fmt, size, w, h, mode, now):
         return dict(
-            filename=fname, original_filename=orig, hash=hash_, relative_path=rel,
+            hash=hash_, filename=fname, original_filename=orig, relative_path=rel,
             format=fmt, size=size, width=w, height=h, mode=mode,
             downloaded_at=now, updated_at=now
         )
