@@ -5,6 +5,8 @@ from PIL import Image, UnidentifiedImageError
 import requests, certifi
 from urllib3 import Retry
 from requests.adapters import HTTPAdapter
+from requests.exceptions import SSLError
+import urllib3
 
 from src.logging.logger import logger
 from src.utils.cache_utils import load_json_data, save_json_data
@@ -79,24 +81,70 @@ class ImageDownloader:
                 "Connection": "keep-alive",
             }
 
-            try:
-                delay = random.uniform(cfg.REQUEST_INTERVAL, cfg.REQUEST_INTERVAL + 1.5)
-                time.sleep(delay)
+            # Try with SSL verification first
+            for ssl_verify in [True, False]:
+                try:
+                    delay = random.uniform(cfg.REQUEST_INTERVAL, cfg.REQUEST_INTERVAL + 1.5)
+                    time.sleep(delay)
 
-                r = self.session.get(url, headers=headers, timeout=cfg.CONNECTION_TIMEOUT)
-                r.raise_for_status()
-                return r.content
+                    # Temporarily override SSL verification if needed
+                    original_verify = self.session.verify
+                    if not ssl_verify:
+                        # Suppress urllib3 SSL warnings when we intentionally disable verification
+                        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+                        self.session.verify = False
+                        logger.warning(f"⚠️  Retrying {url} with SSL verification disabled due to certificate issues")
 
-            except requests.exceptions.HTTPError as e:
-                code = e.response.status_code
-                if code == 403 and i + 1 < len(try_uas):
-                    logger.warning(f"[403] Forbidden for UA index {i}, rotating UA...")
-                    time.sleep(getattr(cfg, 'RETRY_BACKOFF_FOR_UA_ROTATE', 2.0))
-                    continue
-                break 
-            except requests.exceptions.RequestException as e:
-                logger.warning(f"[Request Error] {e}")
+                    r = self.session.get(url, headers=headers, timeout=cfg.CONNECTION_TIMEOUT)
+                    r.raise_for_status()
+                    
+                    # Restore original SSL verification setting and warnings
+                    self.session.verify = original_verify
+                    if not ssl_verify:
+                        # Re-enable warnings for future requests
+                        urllib3.warnings.resetwarnings()
+                    return r.content
+
+                except SSLError as e:
+                    # Restore original SSL verification setting and warnings
+                    self.session.verify = original_verify
+                    if not ssl_verify:
+                        urllib3.warnings.resetwarnings()
+                    if ssl_verify:
+                        logger.warning(f"[SSL Error] {e}")
+                        logger.warning("Retrying with SSL verification disabled...")
+                        continue  # Try again with SSL verification disabled
+                    else:
+                        logger.error(f"[SSL Error] Failed even with SSL verification disabled: {e}")
+                        break  # Both attempts failed, move to next UA or give up
+                        
+                except requests.exceptions.HTTPError as e:
+                    # Restore original SSL verification setting and warnings
+                    self.session.verify = original_verify
+                    if not ssl_verify:
+                        urllib3.warnings.resetwarnings()
+                    code = e.response.status_code
+                    if code == 403 and i + 1 < len(try_uas):
+                        logger.warning(f"[403] Forbidden for UA index {i}, rotating UA...")
+                        time.sleep(getattr(cfg, 'RETRY_BACKOFF_FOR_UA_ROTATE', 2.0))
+                        break  # Break SSL loop, continue with next UA
+                    else:
+                        return None  # Give up entirely
+                        
+                except requests.exceptions.RequestException as e:
+                    # Restore original SSL verification setting and warnings
+                    self.session.verify = original_verify
+                    if not ssl_verify:
+                        urllib3.warnings.resetwarnings()
+                    logger.warning(f"[Request Error] {e}")
+                    if ssl_verify:
+                        continue  # Try again with SSL verification disabled
+                    else:
+                        break  # Both attempts failed, move to next UA or give up
+                
+                # If we got here with ssl_verify=True, the request succeeded
                 break
+                
         return None
 
     def _image_info(self, content: bytes, url: str, filename: str, idx: int, keep: bool):
