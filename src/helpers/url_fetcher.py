@@ -52,14 +52,14 @@ class UrlFetcher:
         logger.status(f"[Worker {self.worker_id}] Searching for '{self.query}' with URL: {self.search_url}")
         
         found_urls = []
-        processed_thumbnails_start_index = 0
+        starting_index = 0
         cache_data = load_json_data(self.cache_file_path) 
         
         if cache_data and cache_data.get('search_url_used') == self.search_url:
             found_urls = list(dict.fromkeys(cache_data.get('urls', [])))
-            processed_thumbnails_start_index = cache_data.get('number_of_processed_thumbnails', 0)
-            if processed_thumbnails_start_index > 0:
-                logger.info(f"[Worker {self.worker_id}] Resuming, previously processed {processed_thumbnails_start_index} thumbnails.")
+            starting_index = cache_data.get('number_of_processed_thumbnails', 0)
+            if starting_index > 0:
+                logger.info(f"[Worker {self.worker_id}] Resuming, previously processed {starting_index} thumbnails.")
 
             if len(found_urls) >= self.target_images:
                 logger.success(f"[Worker {self.worker_id}] Loaded {self.target_images} cached image URLs for '{self.query}'.")
@@ -83,7 +83,7 @@ class UrlFetcher:
             return found_urls
 
         needed_urls = self.target_images - len(found_urls) 
-        if needed_urls <= 0 and len(found_urls) >= self.target_images : 
+        if needed_urls <= 0: 
              logger.info(f"[Worker {self.worker_id}] All {self.target_images} required images already found in cache.")
              return found_urls[:self.target_images]
 
@@ -93,49 +93,53 @@ class UrlFetcher:
         
         high_res_image_selectors = ["n3VNCb", "iPVvYb", "r48jcc", "pT0Scc", "H8Rx8c"]
 
-        processed_thumbnails = processed_thumbnails_start_index if cache_data and cache_data.get('search_url_used') == self.search_url else 0
+        processed_thumbnails = starting_index if cache_data and cache_data.get('search_url_used') == self.search_url else 0
         consecutive_misses = 0
         
         while len(found_urls) < self.target_images and consecutive_misses < cfg.MAX_MISSED:
-            current_thumbnail_idx = processed_thumbnails + 1 
+            index = processed_thumbnails + 1 
             
             try:
-                item_xpath_base = f'//*[@id="rso"]/div/div/div[1]/div/div/div[{current_thumbnail_idx}]'
+                item_xpath_base = f'//*[@id="rso"]/div/div/div[1]/div/div/div[{index}]'
                 
                 try:
                     item_element = WebDriverWait(self.driver, 5).until(
                         EC.presence_of_element_located((By.XPATH, item_xpath_base))
                     )
                 except TimeoutException:
-                    logger.warning(f"[Worker {self.worker_id}] Timeout waiting for item (thumbnail or other) at index {current_thumbnail_idx}. Misses: {consecutive_misses+1}")
+                    logger.warning(f"[Worker {self.worker_id}] Timeout waiting for item (thumbnail or other) at index {index}. Misses: {consecutive_misses+1}")
                     consecutive_misses += 1
                     self.driver.execute_script(f"window.scrollBy(0, {random.randint(500, 800)});")
                     time.sleep(exponential_backoff(consecutive_misses, base=0.5, max_d=cfg.SCROLL_PAUSE_TIME))
                     continue
 
+                # --- START: Skip Related Searches Component ---
                 is_related_block = False
                 try:
-                    if "BA0zte" in item_element.get_attribute("class").split():
+                    item_classes = item_element.get_attribute("class")
+                    if item_classes and "BA0zte" in item_classes.split():
                         is_related_block = True
                     else:
                         item_element.find_element(By.CLASS_NAME, "BA0zte")
                         is_related_block = True
                 except NoSuchElementException:
-                    is_related_block = False
-                except Exception: 
+                    is_related_block = False 
+                except Exception as e_related_check: 
+                    logger.warning(f"[Worker {self.worker_id}] Error checking if item {index} is related block: {e_related_check}")
                     is_related_block = False
 
                 if is_related_block:
-                    logger.info(f"[Worker {self.worker_id}] Identified 'Related searches' block at index {current_thumbnail_idx}. Skipping.")
+                    logger.info(f"[Worker {self.worker_id}] Identified 'Related searches' block at index {index}. Skipping.")
                     processed_thumbnails += 1
                     self.driver.execute_script(f"window.scrollBy(0, {random.randint(50, 150)});") 
                     time.sleep(random.uniform(0.1, 0.3))
                     continue
+                # --- END: Skip Related Searches Component ---
 
                 try:
                     img_thumbnail_element = item_element.find_element(By.XPATH, "./div[2]/h3/a/div/div/div/g-img")
                 except NoSuchElementException:
-                    logger.warning(f"[Worker {self.worker_id}] Item at index {current_thumbnail_idx} not 'Related searches' but no g-img found. Misses: {consecutive_misses+1}")
+                    logger.warning(f"[Worker {self.worker_id}] Item at index {index} not 'Related searches' but no g-img found. Misses: {consecutive_misses+1}")
                     processed_thumbnails += 1 
                     consecutive_misses += 1
                     self.driver.execute_script(f"window.scrollBy(0, {random.randint(200, 400)});")
@@ -150,7 +154,7 @@ class UrlFetcher:
                 except WebDriverException:
                     self.driver.execute_script("arguments[0].click();", img_thumbnail_element)
                 
-                time.sleep(random.uniform(1.0, 2.0)) # Wait for high-res image to load
+                time.sleep(random.uniform(1.0, 3.0)) # Wait for high-res image to load
 
                 image_found_this_iteration = False
                 for cls in high_res_image_selectors:
@@ -220,12 +224,12 @@ class UrlFetcher:
                     time.sleep(random.uniform(0.3, 0.7))
                 
             except TimeoutException: 
-                logger.warning(f"[Worker {self.worker_id}] Outer Timeout in main loop for thumbnail {current_thumbnail_idx}. Misses: {consecutive_misses+1}")
+                logger.warning(f"[Worker {self.worker_id}] Outer Timeout in main loop for thumbnail {index}. Misses: {consecutive_misses+1}")
                 consecutive_misses += 1
                 self.driver.execute_script(f"window.scrollBy(0, {random.randint(1000, 1500)});") # Larger scroll on timeout
                 time.sleep(exponential_backoff(consecutive_misses, base=0.5, max_d=cfg.SCROLL_PAUSE_TIME * 2))
             except (NoSuchElementException, StaleElementReferenceException) as e_thumb:
-                logger.warning(f"[Worker {self.worker_id}] Error processing thumbnail {current_thumbnail_idx}: {type(e_thumb).__name__}. Misses: {consecutive_misses+1}")
+                logger.warning(f"[Worker {self.worker_id}] Error processing thumbnail {index}: {type(e_thumb).__name__}. Misses: {consecutive_misses+1}")
                 consecutive_misses += 1
                 self.driver.execute_script(f"window.scrollBy(0, {random.randint(1000, 1500)});")
                 time.sleep(exponential_backoff(consecutive_misses, base=0.5, max_d=cfg.SCROLL_PAUSE_TIME * 2))
