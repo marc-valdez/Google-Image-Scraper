@@ -42,7 +42,7 @@ develop-eggs/
 /logs/
 
 # Project Specific
-/output/
+/*output*/
 /photos/
 
 # Environment Variables
