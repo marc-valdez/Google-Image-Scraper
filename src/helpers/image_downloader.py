@@ -68,6 +68,18 @@ class ImageDownloader:
         return result
 
     def _fetch(self, url: str) -> bytes | None:
+        # Basic URL validation - skip obviously problematic URLs
+        parsed_url = urlparse(url)
+        if not parsed_url.scheme or not parsed_url.netloc:
+            logger.warning(f"[URL Error] Invalid URL format: {url}")
+            return None
+        
+        # Skip URLs from domains with known SSL certificate issues (configurable)
+        skip_ssl_domains = getattr(cfg, 'SKIP_SSL_PROBLEMATIC_DOMAINS', [])
+        if skip_ssl_domains and any(domain in parsed_url.netloc.lower() for domain in skip_ssl_domains):
+            logger.info(f"[URL Skip] Skipping SSL-problematic domain: {parsed_url.netloc}")
+            return None
+        
         # Use fake-useragent for rotating user agents, with fallback attempts
         max_ua_attempts = 5 if cfg.ROTATE_USER_AGENT else 1
         
@@ -96,7 +108,7 @@ class ImageDownloader:
                         # Suppress urllib3 SSL warnings when we intentionally disable verification
                         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
                         self.session.verify = False
-                        logger.warning(f"⚠️  Retrying {url} with SSL verification disabled due to certificate issues")
+                        logger.warning(f"Retrying {url} with SSL verification disabled due to certificate issues")
 
                     r = self.session.get(url, headers=headers, timeout=cfg.CONNECTION_TIMEOUT)
                     r.raise_for_status()
@@ -113,13 +125,19 @@ class ImageDownloader:
                     self.session.verify = original_verify
                     if not ssl_verify:
                         urllib3.warnings.resetwarnings()
-                    if ssl_verify:
-                        logger.warning(f"[SSL Error] {e}")
+                    
+                    # Check if this is a hostname mismatch or certificate issue
+                    error_str = str(e).lower()
+                    is_hostname_mismatch = "hostname mismatch" in error_str or "certificate is not valid" in error_str
+                    is_cert_verify_failed = "certificate verify failed" in error_str
+                    
+                    if ssl_verify and (is_hostname_mismatch or is_cert_verify_failed):
+                        logger.warning(f"[SSL Error] Certificate issue for {urlparse(url).netloc}: {e}")
                         logger.warning("Retrying with SSL verification disabled...")
                         continue  # Try again with SSL verification disabled
                     else:
-                        logger.error(f"[SSL Error] Failed even with SSL verification disabled: {e}")
-                        break  # Both attempts failed, move to next UA or give up
+                        logger.warning(f"[SSL Error] Skipping problematic URL {url}: {e}")
+                        return None  # Skip this URL entirely if SSL issues persist
                         
                 except requests.exceptions.HTTPError as e:
                     # Restore original SSL verification setting and warnings
@@ -139,11 +157,19 @@ class ImageDownloader:
                     self.session.verify = original_verify
                     if not ssl_verify:
                         urllib3.warnings.resetwarnings()
-                    logger.warning(f"[Request Error] {e}")
-                    if ssl_verify:
+                    
+                    error_str = str(e).lower()
+                    # Check if this is an SSL-related connection issue
+                    is_ssl_related = any(term in error_str for term in ['ssl', 'certificate', 'hostname', 'handshake'])
+                    is_timeout = 'timeout' in error_str or 'timed out' in error_str
+                    
+                    if ssl_verify and (is_ssl_related or is_timeout):
+                        logger.warning(f"[Request Error] SSL/Timeout issue for {parsed_url.netloc}: {e}")
+                        logger.warning("Retrying with SSL verification disabled...")
                         continue  # Try again with SSL verification disabled
                     else:
-                        break  # Both attempts failed, move to next UA or give up
+                        logger.warning(f"[Request Error] Skipping URL due to persistent error: {e}")
+                        return None  # Skip this URL entirely
                 
                 # If we got here with ssl_verify=True, the request succeeded
                 break

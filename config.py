@@ -2,10 +2,10 @@ import os
 import re
 from fake_useragent import UserAgent
 
-NUM_WORKERS = 4
+NUM_WORKERS = 3
 NUM_IMAGES_PER_CLASS = 500
-HEADLESS_MODE = True
-MAX_MISSED = 5
+HEADLESS_MODE = False
+MAX_MISSED = 10
 MAX_CONSECUTIVE_HIGH_RES_FAILURES = 30
 KEEP_FILENAMES = False
 
@@ -14,6 +14,9 @@ MAX_RETRIES = 5
 RETRY_BACKOFF = 0.5
 MAX_RETRY_DELAY = 60
 CONNECTION_TIMEOUT = 15
+
+# SSL Configuration
+SKIP_SSL_PROBLEMATIC_DOMAINS = ['yummyfood.ph', 'typepad.com']  # Add domains to skip, e.g., ['typepad.com', 'blogspot.com']
 
 PAGE_LOAD_TIMEOUT = 30
 BROWSER_REFRESH_INTERVAL = 60
@@ -26,7 +29,7 @@ OUTPUT_DIR_BASE = "output"
 WEBDRIVER_PATH = ""
 CHROME_BINARY_PATH = ""
 
-_ua = UserAgent()
+_ua = UserAgent(platforms='desktop', min_version=120.0)
 def get_random_user_agent():
     try:
         return _ua.random
