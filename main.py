@@ -5,7 +5,7 @@ import concurrent.futures
 from src.GoogleImageScraper import GoogleImageScraper
 from src.logging.logger import logger
 from src.environment.webdriver import WebDriverManager
-
+from src.environment.browser_pool import BrowserPool
 from src.environment.manager import EnvironmentResolver
 import config as cfg
 
@@ -42,16 +42,26 @@ def process_search_tasks(categories_data):
                 logger.warning(f"Skipping invalid search term in category '{category}'")
     return tasks
 
-def worker_thread(category_name, search_key, worker_id, driver_instance):
+def worker_thread(category_name, search_key, worker_id, browser_pool):
     prefix = f"[Task {worker_id}]"
+    browser_info = None
+    
     try:
         logger.status(f"{prefix} Starting search for '{search_key}' in category '{category_name}'")
+        
+        # Acquire a browser from the pool
+        browser_info = browser_pool.acquire_browser(worker_id)
+        if not browser_info:
+            logger.error(f"{prefix} Failed to acquire browser - aborting task")
+            return
+        
+        logger.info(f"{prefix} Using browser {browser_info['id']} for '{search_key}'")
 
         image_scraper = GoogleImageScraper(
             category_dir=category_name,
             class_name=search_key,
             worker_id=worker_id,
-            driver_instance=driver_instance
+            driver_instance=browser_info['driver']
         )
         
         if not image_scraper.skip:
@@ -61,7 +71,7 @@ def worker_thread(category_name, search_key, worker_id, driver_instance):
                 saved_count = image_scraper.download_images(image_urls)
                 
                 if saved_count > 0:
-                    logger.success(f"{prefix} Downloaded {saved_count} images for '{search_key}' in '{category_name}'")
+                    logger.success(f"{prefix} Downloaded {saved_count} images for '{search_key}' in '{category_name}' using browser {browser_info['id']}")
                 else:
                     logger.warning(f"{prefix} No new images downloaded for '{search_key}' in '{category_name}'")
 
@@ -72,10 +82,14 @@ def worker_thread(category_name, search_key, worker_id, driver_instance):
         image_scraper.close()
         del image_scraper
 
-        logger.success(f"{prefix} Completed search for '{search_key}' in '{category_name}'")
+        logger.success(f"{prefix} Completed search for '{search_key}' in '{category_name}' using browser {browser_info['id']}")
 
     except Exception as e:
         logger.error(f"{prefix} Failed processing '{search_key}' in '{category_name}': {e}")
+    finally:
+        # Always release the browser back to the pool
+        if browser_info:
+            browser_pool.release_browser(browser_info, worker_id)
 
 def ensure_output_directory():
     base_output_dir = cfg.get_output_dir()
@@ -84,62 +98,54 @@ def ensure_output_directory():
         os.makedirs(base_output_dir, exist_ok=True)
     return base_output_dir
 
-def initialize_driver_pool(num_drivers):
-    driver_managers = []
-    logger.info(f"Initializing {num_drivers} WebDriver instances for the pool...")
-    for i in range(num_drivers):
-        try:
-            manager = WebDriverManager() # Each manager creates and owns one driver
-            driver_managers.append(manager)
-            logger.info(f"WebDriver instance {i+1}/{num_drivers} initialized.")
-        except Exception as e:
-            logger.error(f"Failed to initialize WebDriver instance {i+1}: {e}")
-    
-    if not driver_managers:
-        logger.error("Failed to initialize any WebDriver instances for the pool. Exiting.")
+def initialize_browser_pool(pool_size):
+    """Initialize the browser pool with the specified number of browsers."""
+    try:
+        return BrowserPool(pool_size)
+    except Exception as e:
+        logger.error(f"Failed to initialize browser pool: {e}")
         sys.exit(1)
-    logger.success(f"Successfully initialized {len(driver_managers)} WebDriver instances.")
-    return driver_managers
 
-def close_driver_pool(driver_managers):
-    logger.info("Closing all WebDriver instances in the pool...")
-    for manager in driver_managers:
-        try:
-            # WebDriverManager will quit the driver because it created it (self.managed_driver is True)
-            manager.close_driver()
-        except Exception as e:
-            logger.error(f"Error closing a WebDriver instance: {e}")
-    logger.success("All WebDriver instances in the pool have been closed.")
-
-def run_parallel_tasks(tasks, driver_managers):
-    num_managers = len(driver_managers)
-    if num_managers == 0:
-        logger.error("No WebDriver instances available in the pool. Cannot run tasks.")
-        return
+def run_parallel_tasks(tasks, browser_pool):
+    """Run tasks in parallel using the browser pool."""
+    pool_status = browser_pool.get_pool_status()
+    logger.info(f"Starting parallel execution with {pool_status['total']} browsers available")
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=cfg.NUM_WORKERS) as executor:
         futures = []
         for worker_id_offset, task in enumerate(tasks):
-            # Assign a driver instance to the worker thread
-            # The worker_id for logging is 1-based, offset is 0-based
-            driver_manager_for_task = driver_managers[worker_id_offset % num_managers]
-            actual_driver_instance = driver_manager_for_task.driver 
-            
             futures.append(
                 executor.submit(
                     worker_thread,
                     task['category'],
                     task['search_key'],
-                    worker_id_offset + 1, # Worker ID for logging
-                    actual_driver_instance
+                    worker_id_offset + 1,  # Worker ID for logging (1-based)
+                    browser_pool
                 )
             )
         
+        # Monitor progress and log pool status periodically
+        completed_count = 0
+        total_tasks = len(futures)
+        
         for future in concurrent.futures.as_completed(futures):
             try:
-                future.result() 
+                future.result()
+                completed_count += 1
+                
+                # Log progress every 5 completed tasks or on completion
+                if completed_count % 5 == 0 or completed_count == total_tasks:
+                    pool_status = browser_pool.get_pool_status()
+                    logger.info(f"Progress: {completed_count}/{total_tasks} tasks completed. "
+                              f"Browser pool: {pool_status['available']}/{pool_status['total']} available")
+                    
             except Exception as e:
                 logger.error(f"A worker thread encountered an unhandled error: {e}")
+                completed_count += 1
+    
+    # Wait for all browsers to be released
+    logger.info("Waiting for all browsers to be released...")
+    browser_pool.wait_for_all_released(timeout=30.0)
 
 def main_app(): 
     logger.set_verbose(False) 
@@ -158,18 +164,14 @@ def main_app():
     
     ensure_output_directory()
 
-    # The number of WebDriver instances in the pool should match NUM_WORKERS for optimal resource use.
-    driver_managers_pool = initialize_driver_pool(cfg.NUM_WORKERS)
-    if len(driver_managers_pool) < cfg.NUM_WORKERS:
-        logger.warning(f"Could not initialize the desired number of WebDrivers ({cfg.NUM_WORKERS}). Proceeding with {len(driver_managers_pool)} drivers.")
-        if not driver_managers_pool: # Still no drivers after warning
-            return 1 
-
+    # Initialize browser pool - use NUM_WORKERS as the pool size for optimal resource use
+    browser_pool = initialize_browser_pool(cfg.NUM_WORKERS)
+    
     try:
-        run_parallel_tasks(tasks_to_run, driver_managers_pool)
+        run_parallel_tasks(tasks_to_run, browser_pool)
     finally:
-        # Ensure all WebDriver instances are closed, even if errors occur during task execution.
-        close_driver_pool(driver_managers_pool)
+        # Ensure all browser instances are closed, even if errors occur during task execution
+        browser_pool.close_all()
     
     logger.success("Image scraping completed successfully")
     return 0 
