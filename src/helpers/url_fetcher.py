@@ -1,3 +1,7 @@
+import os
+import time
+import random
+import urllib.parse
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -7,11 +11,11 @@ from selenium.common.exceptions import (
 )
 from src.environment.webdriver import WebDriverManager
 from src.logging.logger import logger
-from src.utils.cache_utils import load_json_data, save_json_data
+from src.utils.cache_utils import (
+    load_json_data, save_json_data, is_url_duplicate_in_category,
+    is_url_duplicate_across_categories
+)
 import config as cfg
-import time
-import random
-import urllib.parse
 
 def exponential_backoff(attempt, base=1, max_d=None):
     max_delay = max_d if max_d is not None else cfg.MAX_RETRY_DELAY
@@ -20,6 +24,8 @@ def exponential_backoff(attempt, base=1, max_d=None):
 class UrlFetcher:
     def __init__(self, category_dir: str, class_name: str, worker_id: int, driver_instance=None):
         self.worker_id = worker_id
+        self.category_dir = category_dir
+        self.class_name = class_name
         
         self.driver_manager = WebDriverManager(existing_driver=driver_instance)
         self.driver = self.driver_manager.driver
@@ -165,34 +171,54 @@ class UrlFetcher:
                     for el in self.driver.find_elements(By.CLASS_NAME, cls):
                         src = el.get_attribute("src")
                         if src and "http" in src and "encrypted" not in src:
+                            url_already_exists = False  # Reset for each URL
+                            # Check for intraclass duplication (existing logic)
                             if src not in found_urls:
-                                found_urls.append(src)
-                                logger.info(
-                                    f"[Worker {self.worker_id}] Image {len(found_urls)}/{self.images_requested}: {logger.truncate_url(src)}"
-                                )
-                                logger.update_progress(worker_id=self.worker_id)
-
-                                self.consecutive_misses = 0
-                                self.consecutive_high_res_failures = 0
-                                image_found_this_iteration = True
-
-                                save_json_data(self.cache_file_path, {
-                                    'search_urls_used': search_urls_used,
-                                    'search_key': self.query,
-                                    'last_processed_xpath_index': self.current_xpath_index,
-                                    'number_of_images_requested': self.images_requested,
-                                    'number_of_urls_found': len(found_urls),
-                                    'request_efficiency': len(found_urls) / self.images_requested,
-                                    'urls': found_urls
-                                })
-
-                                if len(found_urls) >= self.images_requested:
+                                # Check for interclass duplication within the same category
+                                is_duplicate_in_category = is_url_duplicate_in_category(src, self.category_dir, self.class_name)
+                                
+                                # Check for duplication across all categories (optional - can be disabled for performance)
+                                is_duplicate_across_categories = is_url_duplicate_across_categories(src, self.category_dir, self.class_name)
+                                
+                                if is_duplicate_in_category:
+                                    logger.info(f"[Worker {self.worker_id}] URL already exists in another class within category '{self.category_dir}': {logger.truncate_url(src)}")
+                                    url_already_exists = True
+                                    image_found_this_iteration = True  # Don't count as failure
                                     break
+                                elif is_duplicate_across_categories:
+                                    logger.info(f"[Worker {self.worker_id}] URL already exists in another category: {logger.truncate_url(src)}")
+                                    url_already_exists = True
+                                    image_found_this_iteration = True  # Don't count as failure
+                                    break
+                                else:
+                                    # URL is unique, add it to the collection
+                                    found_urls.append(src)
+                                    logger.info(
+                                        f"[Worker {self.worker_id}] Image {len(found_urls)}/{self.images_requested}: {logger.truncate_url(src)}"
+                                    )
+                                    logger.update_progress(worker_id=self.worker_id)
+
+                                    self.consecutive_misses = 0
+                                    self.consecutive_high_res_failures = 0
+                                    image_found_this_iteration = True
+
+                                    save_json_data(self.cache_file_path, {
+                                        'search_urls_used': search_urls_used,
+                                        'search_key': self.query,
+                                        'last_processed_xpath_index': self.current_xpath_index,
+                                        'number_of_images_requested': self.images_requested,
+                                        'number_of_urls_found': len(found_urls),
+                                        'request_efficiency': len(found_urls) / self.images_requested,
+                                        'urls': found_urls
+                                    })
+
+                                    if len(found_urls) >= self.images_requested:
+                                        break
                             else:
-                                # URL already exists in our collection
+                                # URL already exists in current class collection (intraclass duplication)
                                 url_already_exists = True
                                 image_found_this_iteration = True  # Don't count as failure
-                                logger.info(f"[Worker {self.worker_id}] URL already fetched, moving to next item (index {self.current_xpath_index})")
+                                logger.info(f"[Worker {self.worker_id}] URL already fetched in current class, moving to next item (index {self.current_xpath_index})")
                                 break
                     if image_found_this_iteration:
                         break

@@ -124,3 +124,80 @@ def is_cache_complete(category_dir: str, class_name: str):
     except Exception as e:
         logger.error(f"Error checking cache completeness for '{class_name}' in '{category_dir}': {e}")
         return False
+
+def get_all_urls_in_category(category_dir: str, exclude_class: str = None):
+    try:
+        all_urls = set()
+        metadata_base_dir = os.path.join(cfg.get_output_dir(), "metadata", category_dir)
+        
+        if not os.path.exists(metadata_base_dir):
+            return all_urls
+            
+        # Iterate through all class directories in the category
+        for class_dir in os.listdir(metadata_base_dir):
+            class_path = os.path.join(metadata_base_dir, class_dir)
+            if not os.path.isdir(class_path):
+                continue
+                
+            # Skip the excluded class
+            if exclude_class and class_dir == exclude_class:
+                continue
+                
+            # Look for URL cache files in this class directory
+            url_cache_file = cfg.get_url_cache_file(category_dir, class_dir)
+            if os.path.exists(url_cache_file):
+                cache_data = load_json_data(url_cache_file)
+                if cache_data and 'urls' in cache_data:
+                    urls = cache_data['urls']
+                    if isinstance(urls, list):
+                        all_urls.update(urls)
+                        
+        return all_urls
+        
+    except Exception as e:
+        logger.error(f"Error getting all URLs in category '{category_dir}': {e}")
+        return set()
+
+def get_all_urls_across_categories(exclude_category: str = None, exclude_class: str = None):
+    try:
+        all_urls = set()
+        metadata_base_dir = os.path.join(cfg.get_output_dir(), "metadata")
+        
+        if not os.path.exists(metadata_base_dir):
+            return all_urls
+            
+        # Iterate through all category directories
+        for category_dir in os.listdir(metadata_base_dir):
+            category_path = os.path.join(metadata_base_dir, category_dir)
+            if not os.path.isdir(category_path):
+                continue
+                
+            # Skip the excluded category
+            if exclude_category and category_dir == exclude_category:
+                continue
+                
+            # Get URLs from this category
+            category_urls = get_all_urls_in_category(category_dir, exclude_class if category_dir == exclude_category else None)
+            all_urls.update(category_urls)
+                        
+        return all_urls
+        
+    except Exception as e:
+        logger.error(f"Error getting all URLs across categories: {e}")
+        return set()
+
+def is_url_duplicate_in_category(url: str, category_dir: str, current_class: str):
+    try:
+        existing_urls = get_all_urls_in_category(category_dir, exclude_class=current_class)
+        return url in existing_urls
+    except Exception as e:
+        logger.error(f"Error checking URL duplication in category '{category_dir}': {e}")
+        return False
+
+def is_url_duplicate_across_categories(url: str, current_category: str = None, current_class: str = None):
+    try:
+        existing_urls = get_all_urls_across_categories(exclude_category=current_category, exclude_class=current_class)
+        return url in existing_urls
+    except Exception as e:
+        logger.error(f"Error checking URL duplication across categories: {e}")
+        return False

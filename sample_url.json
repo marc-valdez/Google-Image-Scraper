@@ -1,0 +1,13 @@
+{
+    "search_urls_used": [
+        "https://www.google.com/search?as_st=y&tbm=isch&sa=X&as_q=Tortang+Talong&imgtype=photo"
+    ],
+    "search_key": "Tortang Talong",
+    "last_processed_xpath_index": 1,
+    "number_of_images_requested": 500,
+    "number_of_urls_found": 500,
+    "request_efficiency": 1.0,
+    "urls": [
+        "https://upload.wikimedia.org/wikipedia/commons/1/1e/EGGPLANT_TORTA.jpg"
+    ]
+}

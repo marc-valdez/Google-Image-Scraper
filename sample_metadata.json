@@ -1,0 +1,17 @@
+{
+    "image_cache": {
+        "https://upload.wikimedia.org/wikipedia/commons/1/1e/EGGPLANT_TORTA.jpg": {
+            "hash": "b1cdb96f6373e5416d9cd9408c573825",
+            "filename": "001_TortangTalong.jpeg",
+            "original_filename": "EGGPLANT_TORTA.jpg",
+            "relative_path": "images/Glow/Tortang Talong/001_TortangTalong.jpeg",
+            "format": "jpeg",
+            "size": 3787559,
+            "width": 3216,
+            "height": 2136,
+            "mode": "RGB",
+            "downloaded_at": "2025-05-24T20:32:46.604424",
+            "updated_at": "2025-05-24T20:32:46.604424"
+        }
+    }
+}
