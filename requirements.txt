@@ -5,3 +5,13 @@ tqdm>=4.65.0
 rich>=13.0.0
 absl-py>=1.4.0
 fake-useragent>=1.4.0
+
+# Visualization dependencies for report_visualizations.ipynb
+matplotlib>=3.5.0
+seaborn>=0.11.0
+pandas>=1.3.0
+numpy>=1.21.0
+plotly>=5.0.0
+jupyter>=1.0.0
+notebook>=6.4.0
+ipykernel>=6.0.0
