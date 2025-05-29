@@ -49,3 +49,6 @@ develop-eggs/
 .env
 .env.*
 !.env.example
+
+duplicates.json
+report.json
