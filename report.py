@@ -3,31 +3,39 @@
 Image Download Report Generator
 
 Analyzes metadata from URL fetcher and image downloader to generate comprehensive statistics.
-Reads JSON files from /output/<Category>/<Class>/.cache/<.json>
+Reads JSON files from /output/metadata/<Category>/<Class>/<.json>
 """
 
 import os
 import json
 import glob
+import sys
 from datetime import datetime
 from collections import defaultdict, Counter
 import statistics
 from pathlib import Path
 
+# Add project root to sys.path for config import
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__)))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+import config as cfg
+
 class ImageDownloadReport:
-    def __init__(self, output_dir="output"):
-        self.output_dir = output_dir
+    def __init__(self, output_dir=None):
+        self.output_dir = output_dir or cfg.get_output_dir()
         self.url_data = []
         self.image_data = []
         self.categories = ["Go", "Grow", "Glow"]
         
     def load_metadata(self):
-        """Load all JSON metadata files from cache directories"""
+        """Load all JSON metadata files from metadata directories"""
         print("Loading metadata files...")
         
-        # Pattern: output/<Category>/<Class>/.cache/*.json
-        cache_pattern = os.path.join(self.output_dir, "*", "*", ".cache", "*.json")
-        json_files = glob.glob(cache_pattern)
+        # Pattern: output/metadata/<Category>/<Class>/*.json
+        metadata_pattern = os.path.join(self.output_dir, "metadata", "*", "*", "*.json")
+        json_files = glob.glob(metadata_pattern)
         
         print(f"Found {len(json_files)} JSON files")
         
@@ -38,8 +46,8 @@ class ImageDownloadReport:
                 
                 # Extract category and class from path
                 path_parts = Path(json_file).parts
-                category = path_parts[-4]  # output/<Category>/<Class>/.cache/file.json
-                class_name = path_parts[-3]
+                category = path_parts[-3]  # output/metadata/<Category>/<Class>/file.json
+                class_name = path_parts[-2]
                 
                 # Determine if this is URL data or image metadata
                 if 'urls' in data and 'search_key' in data:
@@ -298,8 +306,25 @@ class ImageDownloadReport:
         
         return stats
     
-    def generate_report_json(self, output_file="report.json", duplicates_file="duplicates.json"):
+    def generate_report_json(self, output_file=None, duplicates_file=None):
         """Generate JSON report file and separate duplicates file"""
+        # Use default filenames within output directory if not specified
+        if output_file is None:
+            output_file = os.path.join(self.output_dir, "report.json")
+        elif not os.path.isabs(output_file):
+            # If relative path provided, make it relative to output directory
+            output_file = os.path.join(self.output_dir, output_file)
+            
+        if duplicates_file is None:
+            duplicates_file = os.path.join(self.output_dir, "duplicates.json")
+        elif not os.path.isabs(duplicates_file):
+            # If relative path provided, make it relative to output directory
+            duplicates_file = os.path.join(self.output_dir, duplicates_file)
+        
+        # Ensure output directory exists
+        os.makedirs(os.path.dirname(output_file), exist_ok=True)
+        os.makedirs(os.path.dirname(duplicates_file), exist_ok=True)
+        
         quant_stats = self.calculate_quantitative_stats()
         temp_stats = self.calculate_temporal_stats()
         quality_stats = self.calculate_quality_checks()

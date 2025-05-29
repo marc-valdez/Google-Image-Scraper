@@ -55,12 +55,6 @@ SEARCH_QUERY_FILE_TYPE = ""               # as_filetype (jpg)
 def get_output_dir() -> str:
     return os.path.join(os.getcwd(), OUTPUT_DIR_BASE)
 
-def get_image_path(category_dir: str, class_name: str) -> str:
-    return os.path.join(get_output_dir(), category_dir, class_name)
-
-def get_cache_dir(category_dir: str, class_name: str) -> str:
-    return os.path.join(get_image_path(category_dir, class_name), ".cache")
-
 def sanitize_class_name(name: str) -> str:
     return re.sub(r'[^A-Za-z0-9]', '', name.title())
 
@@ -69,9 +63,35 @@ def format_filename(class_name: str, index: int) -> str:
     return f"{index:03}_{sanitized}"
 
 def get_url_cache_file(category_dir: str, class_name: str) -> str:
-    return os.path.join(get_cache_dir(category_dir, class_name),
-                        f"{sanitize_class_name(class_name)}_urls.json")
+    return os.path.join(get_metadata_dir(category_dir, class_name), f"{sanitize_class_name(class_name)}_urls.json")
 
 def get_image_metadata_file(category_dir: str, class_name: str) -> str:
-    return os.path.join(get_cache_dir(category_dir, class_name),
-                        f"{sanitize_class_name(class_name)}_metadata.json")
+    return os.path.join(get_metadata_dir(category_dir, class_name), f"{sanitize_class_name(class_name)}_metadata.json")
+
+def get_image_dir(category_dir: str, class_name: str) -> str:
+    return os.path.join(get_output_dir(), "images", category_dir, class_name)
+
+def get_metadata_dir(category_dir: str, class_name: str) -> str:
+    return os.path.join(get_output_dir(), "metadata", category_dir, class_name)
+
+def ensure_base_directories():
+    """Ensure the base images and metadata directories exist."""
+    base_dir = get_output_dir()
+    images_dir = os.path.join(base_dir, "images")
+    metadata_dir = os.path.join(base_dir, "metadata")
+    
+    os.makedirs(base_dir, exist_ok=True)
+    os.makedirs(images_dir, exist_ok=True)
+    os.makedirs(metadata_dir, exist_ok=True)
+    
+    return base_dir, images_dir, metadata_dir
+
+def ensure_class_directories(category_dir: str, class_name: str):
+    """Ensure both image and metadata directories exist for a specific class."""
+    image_path = get_image_dir(category_dir, class_name)
+    metadata_path = get_metadata_dir(category_dir, class_name)
+    
+    os.makedirs(image_path, exist_ok=True)
+    os.makedirs(metadata_path, exist_ok=True)
+    
+    return image_path, metadata_path

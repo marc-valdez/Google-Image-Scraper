@@ -35,9 +35,8 @@ class ImageDownloader:
     def __init__(self, category_dir: str, class_name: str, worker_id: int):
         self.class_name, self.worker_id = class_name, worker_id
         self.category_dir = category_dir
-        self.image_path = cfg.get_image_path(category_dir, class_name)
+        self.image_path = cfg.get_image_dir(category_dir, class_name)
         self.base_dir = cfg.get_output_dir()
-        os.makedirs(self.image_path, exist_ok=True)
         self.rate_limiter = RateLimiter()
         s = requests.Session()
         retries = Retry(total=cfg.MAX_RETRIES, backoff_factor=cfg.RETRY_BACKOFF, status_forcelist=[408, 429, 500, 502, 503, 504], allowed_methods=["GET"])
@@ -236,8 +235,7 @@ class ImageDownloader:
 
     def save_images(self, urls: list, keep: bool) -> int:
         if not urls: return 0
-        category_output_path = os.path.join(self.base_dir, self.category_dir)
-        meta_file = cfg.get_image_metadata_file(category_output_path, self.class_name)
+        meta_file = cfg.get_image_metadata_file(self.category_dir, self.class_name)
         
         cache = load_json_data(meta_file) or {}
         cache.setdefault('image_cache', {})

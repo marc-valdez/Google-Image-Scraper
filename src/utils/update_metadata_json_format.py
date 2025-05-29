@@ -78,6 +78,21 @@ def update_json_files(output_directory_path):
                 if 'exif' in current_processing_image_info:
                     changes_made = True
                 
+                # Update relative_path to new structure if it follows old pattern
+                if 'relative_path' in current_processing_image_info:
+                    old_path = current_processing_image_info['relative_path']
+                    # Check if path follows old structure: output/<category>/<class>/filename
+                    # and doesn't already follow new structure: output/images/<category>/<class>/filename
+                    if old_path and not old_path.startswith('images/') and not old_path.startswith('metadata/'):
+                        # Split the path: output/<category>/<class>/filename -> [<category>, <class>, filename]
+                        path_parts = old_path.replace('\\', '/').split('/')
+                        if len(path_parts) >= 3 and path_parts[0] != 'images':
+                            # Reconstruct as: images/<category>/<class>/filename
+                            new_path = 'images/' + '/'.join(path_parts)
+                            current_processing_image_info['relative_path'] = new_path
+                            changes_made = True
+                            logger.info(f"Updated relative_path: {old_path} -> {new_path}")
+                
                 temp_hash_holder = {}
 
                 # Ensure 'hash' is handled first and removed from its original position

@@ -11,17 +11,14 @@ class GoogleImageScraper:
         self.worker_id = worker_id
 
         self.query = class_name
-        self.image_path = cfg.get_image_path(self.category_dir, class_name)
-        self.cache_dir = cfg.get_cache_dir(self.category_dir, class_name)
-
+        
         if is_cache_complete(self.category_dir, class_name):
             logger.info(f"[Worker {self.worker_id}] Skipping scraper for '{self.query}' — already completed")
             self.skip = True
             return
         self.skip = False
 
-        os.makedirs(self.image_path, exist_ok=True)
-        ensure_cache_dir(self.cache_dir)
+        self.image_path, self.metadata_dir = cfg.ensure_class_directories(self.category_dir, class_name)
 
         # Pass the driver_instance to UrlFetcher
         self.url_fetcher = UrlFetcher(self.category_dir, class_name, self.worker_id, driver_instance=driver_instance)

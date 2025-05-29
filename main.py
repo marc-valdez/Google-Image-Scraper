@@ -92,11 +92,9 @@ def worker_thread(category_name, search_key, worker_id, browser_pool):
             browser_pool.release_browser(browser_info, worker_id)
 
 def ensure_output_directory():
-    base_output_dir = cfg.get_output_dir()
-    if not os.path.exists(base_output_dir):
-        logger.info(f"Creating output directory: {base_output_dir}")
-        os.makedirs(base_output_dir, exist_ok=True)
-    return base_output_dir
+    base_dir, images_dir, metadata_dir = cfg.ensure_base_directories()
+    logger.info(f"Ensured directory structure: {images_dir}, {metadata_dir}")
+    return base_dir
 
 def initialize_browser_pool(pool_size):
     """Initialize the browser pool with the specified number of browsers."""
