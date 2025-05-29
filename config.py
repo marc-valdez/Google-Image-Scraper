@@ -62,10 +62,8 @@ def format_filename(class_name: str, index: int) -> str:
     sanitized = sanitize_class_name(class_name)
     return f"{index:03}_{sanitized}"
 
-def get_url_cache_file(category_dir: str, class_name: str) -> str:
-    return os.path.join(get_metadata_dir(category_dir, class_name), f"{sanitize_class_name(class_name)}_urls.json")
-
 def get_image_metadata_file(category_dir: str, class_name: str) -> str:
+    """Returns path to the unified metadata file containing both fetch_data and download_data"""
     return os.path.join(get_metadata_dir(category_dir, class_name), f"{sanitize_class_name(class_name)}_metadata.json")
 
 def get_image_dir(category_dir: str, class_name: str) -> str:

@@ -16,7 +16,6 @@ from src.utils.cache_utils import (
     is_url_duplicate_across_categories
 )
 import config as cfg
-
 def exponential_backoff(attempt, base=1, max_d=None):
     max_delay = max_d if max_d is not None else cfg.MAX_RETRY_DELAY
     return min(base * (2 ** attempt), max_delay) + random.uniform(0, 0.1)
@@ -32,7 +31,7 @@ class UrlFetcher:
         
         self.query = class_name
         self.images_requested = cfg.NUM_IMAGES_PER_CLASS
-        self.cache_file_path = cfg.get_url_cache_file(category_dir, class_name)
+        self.cache_file_path = cfg.get_image_metadata_file(category_dir, class_name)
         
         self.current_xpath_index = 1 
         self.consecutive_misses = 0
@@ -72,19 +71,57 @@ class UrlFetcher:
         self.driver.execute_script(f"window.scrollBy(0, {random.randint(scroll_min, scroll_max)});")
         time.sleep(exponential_backoff(self.consecutive_misses, base=backoff_base, max_d=cfg.SCROLL_PAUSE_TIME * backoff_max_d_mult))
 
+    def _generate_url_key(self, index: int) -> str:
+        return f"{index:03d}"
+
+    def _get_all_found_urls(self, url_dict: dict) -> list:
+        return list(url_dict.values()) if url_dict else []
+
+    def _get_next_available_key(self, images_dict: dict) -> str:
+        if not images_dict:
+            return self._generate_url_key(1)
+        
+        existing_indices = []
+        for key in images_dict.keys():
+            try:
+                index = int(key)
+                existing_indices.append(index)
+            except ValueError:
+                continue
+        
+        if not existing_indices:
+            return self._generate_url_key(1)
+        
+        next_index = max(existing_indices) + 1
+        return self._generate_url_key(next_index)
+
+    def _create_fetch_metadata(self, url: str, xpath_index: int) -> dict:
+        parsed = urllib.parse.urlparse(url)
+        original_filename = os.path.basename(parsed.path) or "unknown"
+        domain = parsed.netloc
+        
+        return {
+            "fetch_data": {
+                "link": url,
+                "domain": domain,
+                "original_filename": original_filename,
+                "xpath_index": xpath_index
+            }
+        }
+
     def find_image_urls(self):
         logger.status(f"[Worker {self.worker_id}] Searching for '{self.query}' with URL: {self.search_url}")
         
         cache_data = load_json_data(self.cache_file_path)
         
-        # Always load existing URLs from cache to preserve them across different search URLs
-        found_urls = list(dict.fromkeys(cache_data.get('urls', []))) if cache_data else []
+        images_dict = cache_data.get('images', {}) if cache_data else {}
+        found_urls = [img['fetch_data']['link'] for img in images_dict.values() if img.get('fetch_data', {}).get('link')]
         
         # Check if current search URL is in the array of used URLs
         search_urls_used = cache_data.get('search_urls_used', []) if cache_data else []
         
         if cache_data and self.search_url in search_urls_used:
-            last_processed_index = cache_data.get('last_processed_xpath_index', 0)
+            last_processed_index = cache_data.get('last_xpath_index', 0)
             self.current_xpath_index = last_processed_index + 1
             if self.current_xpath_index > 1:
                 logger.info(f"[Worker {self.worker_id}] Resuming. Last processed XPath index was {last_processed_index}. Next to try: {self.current_xpath_index}.")
@@ -97,21 +134,21 @@ class UrlFetcher:
 
         if len(found_urls) >= self.images_requested:
             logger.success(f"[Worker {self.worker_id}] Loaded {self.images_requested} cached image URLs for '{self.query}'.")
-            return found_urls[:self.images_requested]
+            return self._get_ordered_urls(images_dict, self.images_requested)
 
         needed_count = self.images_requested - len(found_urls)
         logger.info(f"[Worker {self.worker_id}] Need {needed_count} more image URLs for '{self.query}'. Starting at XPath index {self.current_xpath_index}.")
 
         if not self.driver:
             logger.error(f"[Worker {self.worker_id}] WebDriver not initialized.")
-            return found_urls 
+            return self._get_ordered_urls(images_dict, self.images_requested)
 
         try:
             self.driver.get(self.search_url)
             WebDriverWait(self.driver, cfg.PAGE_LOAD_TIMEOUT).until(EC.presence_of_element_located((By.TAG_NAME, "img")))
         except (TimeoutException, WebDriverException) as e:
             logger.error(f"[Worker {self.worker_id}] Error on initial page load for {self.search_url}: {e}")
-            return found_urls
+            return self._get_ordered_urls(images_dict, self.images_requested)
 
         logger.start_progress(self.images_requested, f"Finding images for '{self.query}'", self.worker_id)
         if len(found_urls) > 0:
@@ -191,10 +228,13 @@ class UrlFetcher:
                                     image_found_this_iteration = True  # Don't count as failure
                                     break
                                 else:
-                                    # URL is unique, add it to the collection
-                                    found_urls.append(src)
+                                    # URL is unique, add it with fetch metadata
+                                    url_key = self._get_next_available_key(images_dict)
+                                    images_dict[url_key] = self._create_fetch_metadata(src, self.current_xpath_index)
+                                    found_urls = [img['fetch_data']['link'] for img in images_dict.values() if img.get('fetch_data', {}).get('link')]
+                                    
                                     logger.info(
-                                        f"[Worker {self.worker_id}] Image {len(found_urls)}/{self.images_requested}: {logger.truncate_url(src)}"
+                                        f"[Worker {self.worker_id}] Image {len(found_urls)}/{self.images_requested} ({url_key}): {logger.truncate_url(src)}"
                                     )
                                     logger.update_progress(worker_id=self.worker_id)
 
@@ -205,11 +245,10 @@ class UrlFetcher:
                                     save_json_data(self.cache_file_path, {
                                         'search_urls_used': search_urls_used,
                                         'search_key': self.query,
-                                        'last_processed_xpath_index': self.current_xpath_index,
+                                        'last_xpath_index': self.current_xpath_index,
                                         'number_of_images_requested': self.images_requested,
                                         'number_of_urls_found': len(found_urls),
-                                        'request_efficiency': len(found_urls) / self.images_requested,
-                                        'urls': found_urls
+                                        'images': images_dict
                                     })
 
                                     if len(found_urls) >= self.images_requested:
@@ -296,11 +335,10 @@ class UrlFetcher:
         final_cache_data = {
             'search_urls_used': search_urls_used,
             'search_key': self.query,
-            'last_processed_xpath_index': 1,  # Reset to 1 on completion
+            'last_xpath_index': 1,
             'number_of_images_requested': self.images_requested,
             'number_of_urls_found': len(found_urls),
-            'request_efficiency': len(found_urls) / self.images_requested,
-            'urls': found_urls
+            'images': images_dict
         }
         save_json_data(self.cache_file_path, final_cache_data)
         
@@ -319,7 +357,15 @@ class UrlFetcher:
             
             logger.warning(f"[Worker {self.worker_id}] Found {len(found_urls)}/{self.images_requested} URLs for '{self.query}'. Stopped at index {self.current_xpath_index} - {stop_reason}.")
         
-        return found_urls[:self.images_requested]
+        return self._get_ordered_urls(images_dict, self.images_requested)
+
+    def _get_ordered_urls(self, images_dict: dict, limit: int) -> list:
+        if not images_dict:
+            return []
+        
+        # Sort keys to maintain order: 001, 002, etc.
+        sorted_keys = sorted(images_dict.keys(), key=lambda k: int(k) if k.isdigit() else 0)
+        return [images_dict[key]['fetch_data']['link'] for key in sorted_keys[:limit] if images_dict[key].get('fetch_data', {}).get('link')]
 
     def close(self):
         if hasattr(self, 'driver_manager') and self.driver_manager:

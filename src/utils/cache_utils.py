@@ -52,67 +52,55 @@ def remove_file_if_exists(file_path):
     
 def is_cache_complete(category_dir: str, class_name: str):
     try:
-        url_cache_file = cfg.get_url_cache_file(category_dir, class_name)
-        image_metadata_file = cfg.get_image_metadata_file(category_dir, class_name)
-        base_output_dir = cfg.get_output_dir() # Get base output directory
+        metadata_file = cfg.get_image_metadata_file(category_dir, class_name)
+        base_output_dir = cfg.get_output_dir()
         
-        if not os.path.isfile(url_cache_file):
-            logger.warning(f"Missing URL cache file for '{class_name}' in '{category_dir}'.")
-            return False
-            
-        if not os.path.isfile(image_metadata_file):
-            logger.warning(f"Missing image metadata file for '{class_name}' in '{category_dir}'.")
+        if not os.path.isfile(metadata_file):
+            logger.warning(f"Missing metadata file for '{class_name}' in '{category_dir}'.")
             return False
 
-        url_data = load_json_data(url_cache_file)
-        image_metadata = load_json_data(image_metadata_file)
-
-        if not url_data: # Handle case where url_data is None
-            logger.warning(f"URL cache data is empty or invalid for '{class_name}' in '{category_dir}'.")
-            return False
-        if not image_metadata: # Handle case where image_metadata is None
-            logger.warning(f"Image metadata is empty or invalid for '{class_name}' in '{category_dir}'.")
+        metadata = load_json_data(metadata_file)
+        if not metadata:
+            logger.warning(f"Metadata is empty or invalid for '{class_name}' in '{category_dir}'.")
             return False
 
-        urls_found = url_data.get('urls', [])
-        if not isinstance(urls_found, list) or len(urls_found) < cfg.NUM_IMAGES_PER_CLASS:
-            logger.warning(f"Cache not complete for '{class_name}' in '{category_dir}': Not enough URLs in cache ({len(urls_found)}/{cfg.NUM_IMAGES_PER_CLASS}).")
-            return False
-
-        images_in_metadata = image_metadata.get('image_cache', {})
-        if not isinstance(images_in_metadata, dict):
-            logger.error(f"Cache not complete for '{class_name}' in '{category_dir}': Invalid image_cache format.")
+        images_dict = metadata.get('images', {})
+        if not isinstance(images_dict, dict) or len(images_dict) < cfg.NUM_IMAGES_PER_CLASS:
+            logger.warning(f"Cache not complete for '{class_name}' in '{category_dir}': Not enough images in cache ({len(images_dict)}/{cfg.NUM_IMAGES_PER_CLASS}).")
             return False
 
         verified_image_count = 0
-        target_urls_from_cache = urls_found[:cfg.NUM_IMAGES_PER_CLASS]
+        sorted_keys = sorted(images_dict.keys(), key=lambda k: int(k) if k.isdigit() else 0)
+        target_keys = sorted_keys[:cfg.NUM_IMAGES_PER_CLASS]
 
-        for url in target_urls_from_cache:
-            if url in images_in_metadata:
-                img_entry = images_in_metadata[url]
-                relative_path = img_entry.get('relative_path')
+        for url_key in target_keys:
+            img_data = images_dict[url_key]
+            
+            if 'download_data' not in img_data:
+                logger.warning(f"No download_data for key {url_key} in '{class_name}'.")
+                continue
                 
-                if not relative_path:
-                    logger.error(f"Missing 'relative_path' for URL {logger.truncate_url(url)} in metadata for '{class_name}'.")
-                    continue
+            download_data = img_data['download_data']
+            relative_path = download_data.get('relative_path')
+            
+            if not relative_path:
+                logger.error(f"Missing 'relative_path' for key {url_key} in metadata for '{class_name}'.")
+                continue
 
-                absolute_path = os.path.join(base_output_dir, relative_path)
+            absolute_path = os.path.join(base_output_dir, relative_path)
 
-                if os.path.exists(absolute_path):
-                    try:
-                        with open(absolute_path, 'rb') as f_img:
-                            content_hash = hashlib.md5(f_img.read()).hexdigest()
-                        if content_hash == img_entry.get('hash'):
-                            verified_image_count += 1
-                        else:
-                            logger.error(f"Hash mismatch for cached image: {img_entry.get('filename')} (Path: {absolute_path})")
-                    except Exception as e_hash:
-                        logger.error(f"Error verifying hash for {img_entry.get('filename')} (Path: {absolute_path}): {e_hash}")
-                else:
-                    logger.error(f"Cached image file missing: {absolute_path} (Filename: {img_entry.get('filename')})")
+            if os.path.exists(absolute_path):
+                try:
+                    with open(absolute_path, 'rb') as f_img:
+                        content_hash = hashlib.md5(f_img.read()).hexdigest()
+                    if content_hash == download_data.get('hash'):
+                        verified_image_count += 1
+                    else:
+                        logger.error(f"Hash mismatch for cached image: {download_data.get('filename')} (Path: {absolute_path})")
+                except Exception as e_hash:
+                    logger.error(f"Error verifying hash for {download_data.get('filename')} (Path: {absolute_path}): {e_hash}")
             else:
-                logger.warning(f"URL {logger.truncate_url(url)} not found in image metadata.")
-
+                logger.error(f"Cached image file missing: {absolute_path} (Filename: {download_data.get('filename')})")
 
         if verified_image_count < cfg.NUM_IMAGES_PER_CLASS:
             logger.warning(f"Cache not complete for '{class_name}' in '{category_dir}': Not enough verified images in metadata ({verified_image_count}/{cfg.NUM_IMAGES_PER_CLASS}).")
@@ -143,14 +131,16 @@ def get_all_urls_in_category(category_dir: str, exclude_class: str = None):
             if exclude_class and class_dir == exclude_class:
                 continue
                 
-            # Look for URL cache files in this class directory
-            url_cache_file = cfg.get_url_cache_file(category_dir, class_dir)
-            if os.path.exists(url_cache_file):
-                cache_data = load_json_data(url_cache_file)
-                if cache_data and 'urls' in cache_data:
-                    urls = cache_data['urls']
-                    if isinstance(urls, list):
-                        all_urls.update(urls)
+            # Look for metadata files in this class directory
+            metadata_file = cfg.get_image_metadata_file(category_dir, class_dir)
+            if os.path.exists(metadata_file):
+                metadata = load_json_data(metadata_file)
+                if metadata and 'images' in metadata:
+                    images_dict = metadata['images']
+                    if isinstance(images_dict, dict):
+                        for img_data in images_dict.values():
+                            if 'fetch_data' in img_data and 'link' in img_data['fetch_data']:
+                                all_urls.add(img_data['fetch_data']['link'])
                         
         return all_urls
         
