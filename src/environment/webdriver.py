@@ -59,8 +59,8 @@ class WebDriverManager:
                 options = Options()
                 options.binary_location = cfg.CHROME_BINARY_PATH
 
-                if cfg.ROTATE_USER_AGENT and cfg.USER_AGENTS:
-                    user_agent = random.choice(cfg.USER_AGENTS)
+                if cfg.ROTATE_USER_AGENT:
+                    user_agent = cfg.get_random_user_agent()
                     options.add_argument(f"user-agent={user_agent}")
                     logger.info(f"Using User-Agent: {user_agent}")
 

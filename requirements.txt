@@ -4,3 +4,4 @@ pillow>=9.0.1
 tqdm>=4.65.0
 rich>=13.0.0
 absl-py>=1.4.0
+fake-useragent>=1.4.0

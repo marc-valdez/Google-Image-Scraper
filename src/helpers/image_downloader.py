@@ -68,11 +68,14 @@ class ImageDownloader:
         return result
 
     def _fetch(self, url: str) -> bytes | None:
-        uas = getattr(cfg, 'USER_AGENTS', []) or []
-        try_uas = random.sample(uas, len(uas)) if cfg.ROTATE_USER_AGENT else uas
-        try_uas = try_uas or ["Mozilla/5.0"]
-
-        for i, ua in enumerate(try_uas):
+        # Use fake-useragent for rotating user agents, with fallback attempts
+        max_ua_attempts = 5 if cfg.ROTATE_USER_AGENT else 1
+        
+        for i in range(max_ua_attempts):
+            if cfg.ROTATE_USER_AGENT:
+                ua = cfg.get_random_user_agent()
+            else:
+                ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             headers = {
                 "User-Agent": ua,
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
@@ -124,8 +127,8 @@ class ImageDownloader:
                     if not ssl_verify:
                         urllib3.warnings.resetwarnings()
                     code = e.response.status_code
-                    if code == 403 and i + 1 < len(try_uas):
-                        logger.warning(f"[403] Forbidden for UA index {i}, rotating UA...")
+                    if code == 403 and i + 1 < max_ua_attempts:
+                        logger.warning(f"[403] Forbidden for UA attempt {i + 1}, rotating UA...")
                         time.sleep(getattr(cfg, 'RETRY_BACKOFF_FOR_UA_ROTATE', 2.0))
                         break  # Break SSL loop, continue with next UA
                     else:

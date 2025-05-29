@@ -1,10 +1,12 @@
 import os
 import re
+from fake_useragent import UserAgent
 
 NUM_WORKERS = 4
 NUM_IMAGES_PER_CLASS = 500
 HEADLESS_MODE = True
-MAX_MISSED = 3
+MAX_MISSED = 5
+MAX_CONSECUTIVE_HIGH_RES_FAILURES = 30
 KEEP_FILENAMES = False
 
 REQUEST_INTERVAL = 1.0
@@ -14,7 +16,7 @@ MAX_RETRY_DELAY = 60
 CONNECTION_TIMEOUT = 15
 
 PAGE_LOAD_TIMEOUT = 30
-BROWSER_REFRESH_INTERVAL = 50
+BROWSER_REFRESH_INTERVAL = 60
 SCROLL_PAUSE_TIME = 0.5
 LOAD_BUTTON_WAIT = 3.0
 
@@ -24,24 +26,14 @@ OUTPUT_DIR_BASE = "output"
 WEBDRIVER_PATH = ""
 CHROME_BINARY_PATH = ""
 
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.1 Safari/605.1.15",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.1 Safari/605.1.15",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/109.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:109.0) Gecko/20100101 Firefox/109.0",
-    "Mozilla/5.0 (X11; Linux i686; rv:109.0) Gecko/20100101 Firefox/109.0",
-    "Mozilla/5.0 (Linux x86_64; rv:109.0) Gecko/20100101 Firefox/109.0",
-    "Mozilla/5.0 (X11; Ubuntu; Linux i686; rv:109.0) Gecko/20100101 Firefox/109.0",
-    "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/109.0",
-    "Mozilla/5.0 (X11; Fedora; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/109.0",
-]
+_ua = UserAgent()
+def get_random_user_agent():
+    try:
+        return _ua.random
+    except Exception:
+        return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 ROTATE_USER_AGENT = True
-USER_AGENT_CYCLE_ON_ERRORS = [400, 403, 429] # Define which HTTP status codes should trigger a User-Agent cycle attempt
+USER_AGENT_CYCLE_ON_ERRORS = [403, 429] # Define which HTTP status codes should trigger a User-Agent cycle attempt
 RETRY_BACKOFF_FOR_UA_ROTATE = 2.0 # Delay in seconds before retrying with a new User-Agent after an error in USER_AGENT_CYCLE_ON_ERRORS
 
 # Google Search Query Parameters:
