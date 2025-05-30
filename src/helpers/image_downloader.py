@@ -53,15 +53,34 @@ class ImageDownloader:
 
     def _prepare_list(self, images_dict: dict) -> list:
         result = []
+        
         for url_key, img_data in images_dict.items():
             needs_download_flag = True
             if 'download_data' in img_data:
                 download_data = img_data['download_data']
                 rel_path = download_data.get('relative_path')
-                if rel_path:
+                expected_hash = download_data.get('hash')
+                
+                if rel_path and expected_hash:
                     abs_path = os.path.join(self.base_dir, rel_path)
-                    if os.path.exists(abs_path) and verify_file(abs_path, download_data.get("hash")):
+                    
+                    if os.path.exists(abs_path) and verify_file(abs_path, expected_hash):
                         needs_download_flag = False
+                    else:
+                        # File missing or hash mismatch - delete corrupted record and redownload
+                        logger.warning(f"❌ File corrupted/missing, deleting record: {os.path.basename(abs_path)}")
+                        
+                        if os.path.exists(abs_path):
+                            try:
+                                os.remove(abs_path)
+                                logger.info(f"🗑️ Removed corrupted file: {abs_path}")
+                            except Exception as e:
+                                logger.error(f"Failed to remove corrupted file: {e}")
+                        
+                        # Delete the download_data record so it gets redownloaded
+                        del img_data['download_data']
+                        logger.info(f"🔄 Deleted corrupted record, will redownload")
+            
             if needs_download_flag:
                 result.append(url_key)
         return result
@@ -242,6 +261,10 @@ class ImageDownloader:
         
         meta_file = cfg.get_image_metadata_file(self.category_dir, self.class_name)
         to_download = self._prepare_list(images_dict)
+        
+        # Save metadata after cleaning up corrupted records in _prepare_list
+        save_json_data(meta_file, metadata)
+        
         if not to_download:
             return 0
 

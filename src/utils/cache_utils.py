@@ -50,6 +50,7 @@ def remove_file_if_exists(file_path):
         logger.error(f"Could not remove file {file_path}: {e}")
         return False
     
+
 def is_cache_complete(category_dir: str, class_name: str):
     try:
         metadata_file = cfg.get_image_metadata_file(category_dir, class_name)
@@ -69,6 +70,8 @@ def is_cache_complete(category_dir: str, class_name: str):
             logger.warning(f"Cache not complete for '{class_name}' in '{category_dir}': Not enough images in cache ({len(images_dict)}/{cfg.NUM_IMAGES_PER_CLASS}).")
             return False
 
+        metadata_updated = False
+
         verified_image_count = 0
         sorted_keys = sorted(images_dict.keys(), key=lambda k: int(k) if k.isdigit() else 0)
         target_keys = sorted_keys[:cfg.NUM_IMAGES_PER_CLASS]
@@ -82,25 +85,53 @@ def is_cache_complete(category_dir: str, class_name: str):
                 
             download_data = img_data['download_data']
             relative_path = download_data.get('relative_path')
+            expected_hash = download_data.get('hash')
             
-            if not relative_path:
-                logger.error(f"Missing 'relative_path' for key {url_key} in metadata for '{class_name}'.")
+            if not relative_path or not expected_hash:
+                logger.error(f"Missing 'relative_path' or 'hash' for key {url_key} in metadata for '{class_name}'.")
                 continue
 
             absolute_path = os.path.join(base_output_dir, relative_path)
+            expected_filename = os.path.basename(absolute_path)
 
+            # Check if file exists at expected location with correct hash
             if os.path.exists(absolute_path):
                 try:
                     with open(absolute_path, 'rb') as f_img:
                         content_hash = hashlib.md5(f_img.read()).hexdigest()
-                    if content_hash == download_data.get('hash'):
+                    if content_hash == expected_hash:
                         verified_image_count += 1
+                        continue
                     else:
-                        logger.error(f"Hash mismatch for cached image: {download_data.get('filename')} (Path: {absolute_path})")
+                        logger.warning(f"⚠️  Hash mismatch for cached image: {download_data.get('filename')} (Path: {absolute_path})")
+                        # File exists but hash is wrong - delete record and redownload
+                        try:
+                            os.remove(absolute_path)
+                            logger.info(f"🗑️  Removed corrupted file: {absolute_path}")
+                        except Exception as e:
+                            logger.error(f"Failed to remove corrupted file {absolute_path}: {e}")
+                        
+                        # Completely remove corrupted records from metadata
+                        del images_dict[url_key]
+                        metadata_updated = True
+                        logger.info(f"🔄 Completely removed corrupted record {url_key}, will redownload")
+                        continue
+                        
                 except Exception as e_hash:
                     logger.error(f"Error verifying hash for {download_data.get('filename')} (Path: {absolute_path}): {e_hash}")
+                    continue
             else:
-                logger.error(f"Cached image file missing: {absolute_path} (Filename: {download_data.get('filename')})")
+                # File missing - delete record and redownload
+                logger.error(f"❌ File missing: {absolute_path}")
+                # Completely remove missing file records from metadata
+                del images_dict[url_key]
+                metadata_updated = True
+                logger.info(f"🔄 Completely removed missing file record {url_key}, will redownload")
+
+        # Save updated metadata if any corrupted records were deleted
+        if metadata_updated:
+            save_json_data(metadata_file, metadata)
+            logger.info(f"💾 Updated metadata after cleaning corrupted records")
 
         if verified_image_count < cfg.NUM_IMAGES_PER_CLASS:
             logger.warning(f"Cache not complete for '{class_name}' in '{category_dir}': Not enough verified images in metadata ({verified_image_count}/{cfg.NUM_IMAGES_PER_CLASS}).")
