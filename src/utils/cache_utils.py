@@ -2,6 +2,7 @@ import os
 import json
 import hashlib
 from src.logging.logger import logger
+from src.utils.shared_url_index import get_shared_url_index
 import config as cfg
 
 def ensure_cache_dir(cache_path):
@@ -145,75 +146,43 @@ def is_cache_complete(category_dir: str, class_name: str):
         logger.error(f"Error checking cache completeness for '{class_name}' in '{category_dir}': {e}")
         return False
 
-def get_all_urls_in_category(category_dir: str, exclude_class: str = None):
-    try:
-        all_urls = set()
-        metadata_base_dir = os.path.join(cfg.get_output_dir(), "metadata", category_dir)
-        
-        if not os.path.exists(metadata_base_dir):
-            return all_urls
-            
-        for class_dir in os.listdir(metadata_base_dir):
-            class_path = os.path.join(metadata_base_dir, class_dir)
-            if not os.path.isdir(class_path):
-                continue
-                
-            if exclude_class and class_dir == exclude_class:
-                continue
-                
-            metadata_file = cfg.get_image_metadata_file(category_dir, class_dir)
-            if os.path.exists(metadata_file):
-                metadata = load_json_data(metadata_file)
-                if metadata and 'images' in metadata:
-                    images_dict = metadata['images']
-                    if isinstance(images_dict, dict):
-                        for img_data in images_dict.values():
-                            if 'fetch_data' in img_data and 'link' in img_data['fetch_data']:
-                                all_urls.add(img_data['fetch_data']['link'])
-                        
-        return all_urls
-        
-    except Exception as e:
-        logger.error(f"Error getting all URLs in category '{category_dir}': {e}")
-        return set()
-
-def get_all_urls_across_categories(exclude_category: str = None, exclude_class: str = None):
-    try:
-        all_urls = set()
-        metadata_base_dir = os.path.join(cfg.get_output_dir(), "metadata")
-        
-        if not os.path.exists(metadata_base_dir):
-            return all_urls
-            
-        for category_dir in os.listdir(metadata_base_dir):
-            category_path = os.path.join(metadata_base_dir, category_dir)
-            if not os.path.isdir(category_path):
-                continue
-                
-            if exclude_category and category_dir == exclude_category:
-                continue
-                
-            category_urls = get_all_urls_in_category(category_dir, exclude_class if category_dir == exclude_category else None)
-            all_urls.update(category_urls)
-                        
-        return all_urls
-        
-    except Exception as e:
-        logger.error(f"Error getting all URLs across categories: {e}")
-        return set()
-
 def is_url_duplicate_in_category(url: str, category_dir: str, current_class: str):
     try:
-        existing_urls = get_all_urls_in_category(category_dir, exclude_class=current_class)
-        return url in existing_urls
+        shared_index = get_shared_url_index()
+        return shared_index.is_url_duplicate_in_category(url, category_dir, current_class)
     except Exception as e:
         logger.error(f"Error checking URL duplication in category '{category_dir}': {e}")
         return False
 
 def is_url_duplicate_across_categories(url: str, current_category: str = None, current_class: str = None):
     try:
-        existing_urls = get_all_urls_across_categories(exclude_category=current_category, exclude_class=current_class)
-        return url in existing_urls
+        shared_index = get_shared_url_index()
+        return shared_index.is_url_duplicate_across_categories(url, current_category, current_class)
     except Exception as e:
         logger.error(f"Error checking URL duplication across categories: {e}")
+        return False
+
+def add_url_to_shared_index(url: str, category_dir: str, class_name: str):
+    try:
+        shared_index = get_shared_url_index()
+        shared_index.add_url(category_dir, class_name, url)
+    except Exception as e:
+        logger.error(f"Error adding URL to shared index: {e}")
+
+def get_shared_index_stats():
+    try:
+        shared_index = get_shared_url_index()
+        return shared_index.get_stats()
+    except Exception as e:
+        logger.error(f"Error getting shared index stats: {e}")
+        return {}
+
+def initialize_shared_index():
+    try:
+        shared_index = get_shared_url_index()
+        stats = shared_index.get_stats()
+        logger.info(f"Initialized shared URL index: {stats['total_urls']} URLs across {stats['total_categories']} categories")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to initialize shared index: {e}")
         return False

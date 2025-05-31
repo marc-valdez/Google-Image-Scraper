@@ -48,6 +48,10 @@ class ImageScraperLogger:
     def info(self, message: str):
         if self.verbose:
             self.console.print(self._format_message(f"ℹ️ {message}"), style="info")
+    
+    def debug(self, message: str):
+        if self.verbose:
+            self.console.print(self._format_message(f"🐛 {message}"), style="dim")
             
     def warning(self, message: str):
         self.console.print(self._format_message(f"⚠️  {message}"), style="warning")

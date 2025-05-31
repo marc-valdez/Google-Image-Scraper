@@ -8,6 +8,7 @@ from src.environment.webdriver import WebDriverManager
 from src.environment.browser_pool import BrowserPool
 from src.environment.manager import EnvironmentResolver
 import config as cfg
+from src.utils.cache_utils import initialize_shared_index, get_shared_index_stats
 
 cfg.CHROME_BINARY_PATH = EnvironmentResolver.auto_detect_chrome()
 cfg.WEBDRIVER_PATH = EnvironmentResolver.resolve_webdriver_path()
@@ -145,13 +146,13 @@ def run_parallel_tasks(tasks, browser_pool):
     logger.info("Waiting for all browsers to be released...")
     browser_pool.wait_for_all_released(timeout=30.0)
 
-def main_app(): 
-    logger.set_verbose(False) 
+def main_app():
+    logger.set_verbose(False)
     
     categories_data = load_categories_from_json(cfg.CATEGORIES_FILE)
     if not categories_data:
         logger.error("Failed to load categories - exiting")
-        return 1 
+        return 1
     
     tasks_to_run = process_search_tasks(categories_data)
     if not tasks_to_run:
@@ -161,6 +162,14 @@ def main_app():
     logger.status(f"Starting image scraping for {len(tasks_to_run)} tasks across {len(categories_data)} categories using {cfg.NUM_WORKERS} workers.")
     
     ensure_output_directory()
+    
+    # Initialize shared URL index for efficient duplication checking
+    logger.info("Initializing shared URL index for memory-efficient duplication checking...")
+    if initialize_shared_index():
+        index_stats = get_shared_index_stats()
+        logger.info(f"Shared index ready: {index_stats.get('total_urls', 0)} existing URLs loaded")
+    else:
+        logger.warning("Shared index initialization failed - falling back to file-based checks")
 
     # Initialize browser pool - use NUM_WORKERS as the pool size for optimal resource use
     browser_pool = initialize_browser_pool(cfg.NUM_WORKERS)
@@ -170,9 +179,16 @@ def main_app():
     finally:
         # Ensure all browser instances are closed, even if errors occur during task execution
         browser_pool.close_all()
+        
+        # Log final shared index stats
+        try:
+            final_stats = get_shared_index_stats()
+            logger.info(f"Final shared index stats: {final_stats.get('total_urls', 0)} URLs across {final_stats.get('total_categories', 0)} categories")
+        except Exception:
+            pass
     
     logger.success("Image scraping completed successfully")
-    return 0 
+    return 0
 
 if __name__ == "__main__":
     exit_code = main_app()

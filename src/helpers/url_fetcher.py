@@ -11,10 +11,13 @@ from selenium.common.exceptions import (
 )
 from src.environment.webdriver import WebDriverManager
 from src.logging.logger import logger
-from src.utils.cache_utils import (
-    load_json_data, save_json_data, is_url_duplicate_in_category,
-    is_url_duplicate_across_categories
+from src.utils.cache_utils import load_json_data, save_json_data
+from src.helpers.selenium_helpers import (
+    click_thumbnail_element, extract_high_res_urls, perform_periodic_scroll,
+    refresh_page_if_needed, attempt_recovery_scroll, is_related_searches_block,
+    get_progressive_timeout
 )
+from src.helpers.duplication_checker import DuplicationChecker
 import config as cfg
 def exponential_backoff(attempt, base=1, max_d=None):
     max_delay = max_d if max_d is not None else cfg.MAX_RETRY_DELAY
@@ -33,9 +36,11 @@ class UrlFetcher:
         self.images_requested = cfg.NUM_IMAGES_PER_CLASS
         self.cache_file_path = cfg.get_image_metadata_file(category_dir, class_name)
         
-        self.current_xpath_index = 1 
+        self.current_xpath_index = 1
         self.consecutive_misses = 0
         self.consecutive_high_res_failures = 0
+        
+        self.duplication_checker = DuplicationChecker(category_dir, class_name, worker_id)
         
         params = {
             "as_st": "y",   # Advanced search type
@@ -74,8 +79,6 @@ class UrlFetcher:
     def _generate_url_key(self, index: int) -> str:
         return f"{index:03d}"
 
-    def _get_all_found_urls(self, url_dict: dict) -> list:
-        return list(url_dict.values()) if url_dict else []
 
     def _get_next_available_key(self, images_dict: dict) -> str:
         if not images_dict:
@@ -172,104 +175,67 @@ class UrlFetcher:
         while len(found_urls) < self.images_requested and self.consecutive_misses < cfg.MAX_MISSED and self.current_xpath_index < 1000:
             item_xpath = f'//*[@id="rso"]/div/div/div[1]/div/div/div[{self.current_xpath_index}]'
             try:
-                # Use progressive timeout - longer waits for higher indices
-                timeout = min(10, 5 + (self.current_xpath_index // 100))
+                timeout = get_progressive_timeout(self.current_xpath_index)
                 item_element = WebDriverWait(self.driver, timeout).until(
                     EC.presence_of_element_located((By.XPATH, item_xpath))
                 )
 
-                # Skip if this is a related searches block
-                item_classes = item_element.get_attribute("class") or ""
-                if "BA0zte" in item_classes.split():
+                if is_related_searches_block(item_element):
                     logger.info(f"[Worker {self.worker_id}] Skipping related searches block at index {self.current_xpath_index}.")
-                    self.driver.execute_script(f"window.scrollBy(0, {random.randint(50, 150)});") 
+                    self.driver.execute_script(f"window.scrollBy(0, {random.randint(50, 150)});")
                     time.sleep(random.uniform(0.1, 0.3))
                     self.current_xpath_index += 1
                     continue
 
-                # Skip if this item does not contain a g-img
                 try:
                     img_thumbnail_element = item_element.find_element(By.XPATH, ".//g-img")
                 except NoSuchElementException:
                     raise NoSuchElementException("No g-img found in item")
 
                 self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", img_thumbnail_element)
-
-                # Try clicking the thumbnail with better error handling
-                try:
-                    WebDriverWait(item_element, 3).until(
-                        EC.element_to_be_clickable((By.XPATH, ".//g-img"))
-                    ).click()
-                except (WebDriverException, StaleElementReferenceException):
-                    try:
-                        # Re-find the element if it became stale
-                        fresh_element = self.driver.find_element(By.XPATH, item_xpath)
-                        fresh_img = fresh_element.find_element(By.XPATH, ".//g-img")
-                        self.driver.execute_script("arguments[0].click();", fresh_img)
-                    except (NoSuchElementException, StaleElementReferenceException):
-                        # If still failing, use JavaScript click with scrolling
-                        self.driver.execute_script("arguments[0].click();", img_thumbnail_element)
-
-                time.sleep(random.uniform(1.0, 3.0))  # Wait for high-res image panel
+                click_thumbnail_element(self.driver, item_xpath, item_element, img_thumbnail_element, self.worker_id)
+                time.sleep(random.uniform(1.0, 3.0))
 
                 image_found_this_iteration = False
                 url_already_exists = False
                 
-                for cls in high_res_image_selectors:
-                    for el in self.driver.find_elements(By.CLASS_NAME, cls):
-                        src = el.get_attribute("src")
-                        if src and "http" in src and "encrypted" not in src:
-                            url_already_exists = False  # Reset for each URL
-                            # Check for intraclass duplication (existing logic)
-                            if src not in found_urls:
-                                # Check for interclass duplication within the same category
-                                is_duplicate_in_category = is_url_duplicate_in_category(src, self.category_dir, self.class_name)
-                                
-                                # Check for duplication across all categories (optional - can be disabled for performance)
-                                is_duplicate_across_categories = is_url_duplicate_across_categories(src, self.category_dir, self.class_name)
-                                
-                                if is_duplicate_in_category:
-                                    logger.info(f"[Worker {self.worker_id}] URL already exists in another class within category '{self.category_dir}': {logger.truncate_url(src)}")
-                                    url_already_exists = True
-                                    image_found_this_iteration = True  # Don't count as failure
-                                    break
-                                elif is_duplicate_across_categories:
-                                    logger.info(f"[Worker {self.worker_id}] URL already exists in another category: {logger.truncate_url(src)}")
-                                    url_already_exists = True
-                                    image_found_this_iteration = True  # Don't count as failure
-                                    break
-                                else:
-                                    # URL is unique, add it with fetch metadata
-                                    url_key = self._get_next_available_key(images_dict)
-                                    images_dict[url_key] = self._create_fetch_metadata(src, self.current_xpath_index)
-                                    found_urls = [img['fetch_data']['link'] for img in images_dict.values() if img.get('fetch_data', {}).get('link')]
-                                    
-                                    logger.info(
-                                        f"[Worker {self.worker_id}] Image {len(found_urls)}/{self.images_requested} ({url_key}): {logger.truncate_url(src)}"
-                                    )
-                                    logger.update_progress(worker_id=self.worker_id)
+                high_res_urls = extract_high_res_urls(self.driver, high_res_image_selectors)
+                
+                for src in high_res_urls:
+                    duplicate_status = self.duplication_checker.check_url_duplicates(src, found_urls)
+                    
+                    if duplicate_status == "unique":
+                        url_key = self._get_next_available_key(images_dict)
+                        images_dict[url_key] = self._create_fetch_metadata(src, self.current_xpath_index)
+                        found_urls = [img['fetch_data']['link'] for img in images_dict.values() if img.get('fetch_data', {}).get('link')]
+                        
+                        self.duplication_checker.add_unique_url(src)
+                        
+                        logger.info(
+                            f"[Worker {self.worker_id}] Image {len(found_urls)}/{self.images_requested} ({url_key}): {logger.truncate_url(src)}"
+                        )
+                        logger.update_progress(worker_id=self.worker_id)
 
-                                    self.consecutive_misses = 0
-                                    self.consecutive_high_res_failures = 0
-                                    image_found_this_iteration = True
+                        self.consecutive_misses = 0
+                        self.consecutive_high_res_failures = 0
+                        image_found_this_iteration = True
 
-                                    save_json_data(self.cache_file_path, {
-                                        'search_urls_used': search_urls_used,
-                                        'search_key': self.query,
-                                        'last_xpath_index': self.current_xpath_index,
-                                        'number_of_images_requested': self.images_requested,
-                                        'number_of_urls_found': len(found_urls),
-                                        'images': images_dict
-                                    })
+                        save_json_data(self.cache_file_path, {
+                            'search_urls_used': search_urls_used,
+                            'search_key': self.query,
+                            'last_xpath_index': self.current_xpath_index,
+                            'number_of_images_requested': self.images_requested,
+                            'number_of_urls_found': len(found_urls),
+                            'images': images_dict
+                        })
 
-                                    if len(found_urls) >= self.images_requested:
-                                        break
-                            else:
-                                # URL already exists in current class collection (intraclass duplication)
-                                url_already_exists = True
-                                image_found_this_iteration = True  # Don't count as failure
-                                logger.info(f"[Worker {self.worker_id}] URL already fetched in current class, moving to next item (index {self.current_xpath_index})")
-                                break
+                        if len(found_urls) >= self.images_requested:
+                            break
+                    else:
+                        url_already_exists = True
+                        image_found_this_iteration = True
+                        break
+                    
                     if image_found_this_iteration:
                         break
 
@@ -291,44 +257,17 @@ class UrlFetcher:
                             self.driver.execute_script(f"window.scrollBy(0, {random.randint(100, 200)});")
                             time.sleep(exponential_backoff(self.consecutive_high_res_failures, base=0.2, max_d=cfg.SCROLL_PAUSE_TIME * 0.5))
 
-                # Enhanced periodic actions for better page navigation
-                if self.current_xpath_index % 5 == 0:
-                    self.driver.execute_script(f"window.scrollBy(0, {random.randint(400, 600)});")
-                    time.sleep(random.uniform(0.3, 0.7))
-                
-                # Page refresh for very high indices to prevent stale elements
-                if self.current_xpath_index > 0 and self.current_xpath_index % cfg.BROWSER_REFRESH_INTERVAL == 0:
-                    logger.info(f"[Worker {self.worker_id}] Refreshing page at index {self.current_xpath_index} to prevent stale elements.")
-                    self.driver.refresh()
-                    WebDriverWait(self.driver, cfg.PAGE_LOAD_TIMEOUT).until(
-                        EC.presence_of_element_located((By.TAG_NAME, "img"))
-                    )
-                    time.sleep(random.uniform(2.0, 4.0))
+                perform_periodic_scroll(self.driver, self.current_xpath_index)
+                refresh_page_if_needed(self.driver, self.current_xpath_index, self.worker_id)
 
             except (TimeoutException, NoSuchElementException, StaleElementReferenceException, WebDriverException) as e:
-                # Enhanced error handling with recovery attempts
-                # Clean error message without verbose stacktrace
                 error_type = type(e).__name__
                 error_msg = f"[Worker {self.worker_id}] {error_type} at index {self.current_xpath_index}. Misses: {self.consecutive_misses + 1}"
                 
-                # For TimeoutException at high indices, try recovery
                 if isinstance(e, TimeoutException) and self.current_xpath_index > 100:
                     logger.warning(f"{error_msg} - Attempting recovery...")
-                    try:
-                        # Scroll to bottom to load more content
-                        logger.info(f"[Worker {self.worker_id}] Recovery: Scrolling to bottom to load more images...")
-                        self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-                        time.sleep(random.uniform(3.0, 5.0))  # Wait longer for content to load
-                        
-                        # Check if we can find any images on current viewport
-                        available_items = self.driver.find_elements(By.XPATH, '//*[@id="rso"]//g-img')
-                        if len(available_items) == 0:
-                            logger.warning(f"[Worker {self.worker_id}] No more images found in viewport. May have reached end of results.")
-                            self.consecutive_misses += 2  # Penalize more heavily
-                        else:
-                            logger.info(f"[Worker {self.worker_id}] Found {len(available_items)} images in current viewport after recovery scroll.")
-                    except Exception as recovery_e:
-                        logger.warning(f"[Worker {self.worker_id}] Recovery attempt failed: {recovery_e}")
+                    penalty = attempt_recovery_scroll(self.driver, self.current_xpath_index, self.worker_id)
+                    self.consecutive_misses += penalty
                 
                 self._handle_item_error(error_msg, scroll_min=300, scroll_max=800, backoff_base=0.5, backoff_max_d_mult=1.5)
             except Exception as e_main:
