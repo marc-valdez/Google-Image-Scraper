@@ -92,6 +92,17 @@ class UrlFetcher:
         if not existing_indices:
             return self._generate_url_key(1)
         
+        # Sort indices to find gaps
+        existing_indices.sort()
+        
+        # Look for the first gap in the sequence
+        for i in range(len(existing_indices)):
+            expected_index = i + 1
+            if existing_indices[i] != expected_index:
+                # Found a gap, return the missing index
+                return self._generate_url_key(expected_index)
+        
+        # No gaps found, append after the last index
         next_index = max(existing_indices) + 1
         return self._generate_url_key(next_index)
 

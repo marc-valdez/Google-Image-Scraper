@@ -91,18 +91,20 @@ class ImageDownloader:
         if not ssl_verify:
             urllib3.warnings.resetwarnings()
 
-    def _fetch(self, url: str) -> bytes | None:
+    def _fetch(self, url: str) -> tuple[bytes | None, str | None]:
         # Early validation - skip obviously problematic URLs
         parsed_url = urlparse(url)
         if not parsed_url.scheme or not parsed_url.netloc:
-            logger.warning(f"[URL Error] Invalid URL format: {url}")
-            return None
+            error_msg = f"Invalid URL format: {url}"
+            logger.warning(f"[URL Error] {error_msg}")
+            return None, error_msg
         
         # Skip domains with known SSL certificate issues
         skip_ssl_domains = getattr(cfg, 'SKIP_SSL_PROBLEMATIC_DOMAINS', [])
         if skip_ssl_domains and any(domain in parsed_url.netloc.lower() for domain in skip_ssl_domains):
-            logger.info(f"[URL Skip] Skipping SSL-problematic domain: {parsed_url.netloc}")
-            return None
+            error_msg = f"Skipping SSL-problematic domain: {parsed_url.netloc}"
+            logger.info(f"[URL Skip] {error_msg}")
+            return None, error_msg
         
         max_ua_attempts = 5 if cfg.ROTATE_USER_AGENT else 1
         
@@ -131,7 +133,7 @@ class ImageDownloader:
                     r.raise_for_status()
                     
                     self._restore_ssl_settings(original_verify, ssl_verify)
-                    return r.content
+                    return r.content, None
 
                 except SSLError as e:
                     self._restore_ssl_settings(original_verify, ssl_verify)
@@ -141,8 +143,9 @@ class ImageDownloader:
                         logger.warning(f"[SSL Error] Certificate issue for {parsed_url.netloc}: {e}")
                         continue  # Try with SSL disabled
                     else:
+                        error_msg = f"SSL Error - {str(e)}"
                         logger.warning(f"[SSL Error] Skipping problematic URL {url}: {e}")
-                        return None
+                        return None, error_msg
                         
                 except requests.exceptions.HTTPError as e:
                     self._restore_ssl_settings(original_verify, ssl_verify)
@@ -150,7 +153,9 @@ class ImageDownloader:
                         logger.warning(f"[403] Forbidden for UA attempt {i + 1}, rotating UA...")
                         time.sleep(getattr(cfg, 'RETRY_BACKOFF_FOR_UA_ROTATE', 2.0))
                         break  # Try next user agent
-                    return None
+                    error_msg = f"HTTP {e.response.status_code} error after all user agent attempts"
+                    logger.warning(f"[HTTP Error] {error_msg} for {url}")
+                    return None, error_msg
                         
                 except requests.exceptions.RequestException as e:
                     self._restore_ssl_settings(original_verify, ssl_verify)
@@ -160,12 +165,15 @@ class ImageDownloader:
                         logger.warning(f"[Request Error] SSL/Timeout issue for {parsed_url.netloc}: {e}")
                         continue  # Try with SSL disabled
                     else:
+                        error_msg = f"Request Error - {str(e)}"
                         logger.warning(f"[Request Error] Skipping URL due to error: {e}")
-                        return None
+                        return None, error_msg
                 
                 break  # Success with current SSL setting
                 
-        return None
+        error_msg = f"All download attempts failed after {max_ua_attempts} user agent attempts"
+        logger.warning(f"[Download Failed] {error_msg} for {url}")
+        return None, error_msg
 
     def _image_info(self, content: bytes, url: str, filename: str, url_key: str, keep: bool):
         try:
@@ -216,7 +224,7 @@ class ImageDownloader:
         orig_fname = fetch_data.get('original_filename', 'unknown')
         
         if not url:
-            logger.warning(f"[Worker {self.worker_id}] No URL found for key {url_key}")
+            logger.warning(f"[Worker {self.worker_id}] ❌ Download failed for key {url_key}: No URL found")
             return False
 
         # Check if already downloaded with same content
@@ -228,8 +236,10 @@ class ImageDownloader:
                 if os.path.exists(abs_path) and verify_file(abs_path, download_data.get('hash')):
                     return False  # Already have valid file
 
-        content = self._fetch(url)
+        content, error_msg = self._fetch(url)
         if not content:
+            logger.error(f"[Worker {self.worker_id}] ❌ Download failed for key {url_key} ({orig_fname}): {error_msg or 'Unknown fetch error'}")
+            logger.error(f"[Worker {self.worker_id}]    URL: {url}")
             return False
 
         # Process content only after successful fetch
@@ -239,6 +249,8 @@ class ImageDownloader:
         rel_path = os.path.relpath(abs_path, self.base_dir).replace('\\', '/')
 
         if not self._save(content, abs_path, hash_):
+            logger.error(f"[Worker {self.worker_id}] ❌ Save failed for key {url_key} ({fname}): File write or verification error")
+            logger.error(f"[Worker {self.worker_id}]    Path: {abs_path}")
             return False
 
         # Update metadata with download data
@@ -270,12 +282,15 @@ class ImageDownloader:
 
         logger.start_progress(len(to_download), f"Downloading '{self.class_name}'", self.worker_id)
         count = 0
+        failed_count = 0
         
         # Process downloads and batch save metadata periodically
         for i, url_key in enumerate(to_download):
             img_data = images_dict[url_key]
             if self._download_image(url_key, img_data, metadata, keep):
                 count += 1
+            else:
+                failed_count += 1
                 
             # Save metadata every 5 images or at the end to reduce I/O
             if (i + 1) % 5 == 0 or i == len(to_download) - 1:
@@ -284,4 +299,11 @@ class ImageDownloader:
             logger.update_progress(worker_id=self.worker_id)
             
         logger.complete_progress(worker_id=self.worker_id)
+        
+        # Report final statistics
+        if failed_count > 0:
+            logger.warning(f"[Worker {self.worker_id}] Download summary for '{self.class_name}': {count} successful, {failed_count} failed out of {len(to_download)} total")
+        else:
+            logger.info(f"[Worker {self.worker_id}] Download summary for '{self.class_name}': All {count} images downloaded successfully")
+            
         return count
