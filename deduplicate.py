@@ -3,7 +3,7 @@ import os
 import random
 import uuid
 from typing import Dict, List, Union
-from config import get_image_metadata_file, get_url_cache_file, get_output_dir
+from config import get_image_metadata_file, get_output_dir
 from src.logging.logger import logger
 
 def load_duplicates() -> Dict[str, Dict]:
@@ -36,49 +36,28 @@ def update_json_files(image_path: str) -> None:
                 with open(metadata_file, "r") as f:
                     metadata = json.load(f)
                 
-                if not isinstance(metadata, dict) or "image_cache" not in metadata:
+                if not isinstance(metadata, dict) or "images" not in metadata:
                     logger.error(f"Invalid metadata format in {metadata_file}")
                     return
                 
                 # Find and remove entry with matching filename
-                entries_to_remove = []
-                for url, entry in metadata["image_cache"].items():
-                    if entry.get("filename") == filename:
-                        entries_to_remove.append(url)
+                image_keys_to_remove = []
                 
-                if entries_to_remove:
-                    for url in entries_to_remove:
-                        del metadata["image_cache"][url]
+                for image_key, image_data in metadata["images"].items():
+                    if (isinstance(image_data, dict) and
+                        "download_data" in image_data and
+                        image_data["download_data"].get("filename") == filename):
+                        image_keys_to_remove.append(image_key)
+                
+                if image_keys_to_remove:
+                    for image_key in image_keys_to_remove:
+                        del metadata["images"][image_key]
                     with open(metadata_file, "w") as f:
                         json.dump(metadata, f, indent=4)
                     logger.info(f"Updated metadata for {filename} in {class_name}")
                     
             except Exception as e:
                 logger.error(f"Error updating metadata file {metadata_file}: {str(e)}")
-        
-        # Update URLs file
-        urls_file = get_url_cache_file(category_dir, class_name)
-        if os.path.exists(urls_file):
-            try:
-                with open(urls_file, "r") as f:
-                    urls_data = json.load(f)
-                
-                if not isinstance(urls_data, dict) or "urls" not in urls_data:
-                    logger.error(f"Invalid URLs format in {urls_file}")
-                    return
-                
-                # Remove URLs that were used for this image based on metadata
-                if entries_to_remove:
-                    original_len = len(urls_data["urls"])
-                    urls_data["urls"] = [url for url in urls_data["urls"] if url not in entries_to_remove]
-                    
-                    if len(urls_data["urls"]) != original_len:
-                        with open(urls_file, "w") as f:
-                            json.dump(urls_data, f, indent=4)
-                        logger.info(f"Updated URLs for {filename} in {class_name}")
-                    
-            except Exception as e:
-                logger.error(f"Error updating URLs file {urls_file}: {str(e)}")
 
 def handle_duplicate_set(files: List[str], worker_id: str) -> None:
     """Handle a set of duplicate files by keeping one randomly and removing others."""
