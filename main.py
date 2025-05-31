@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import signal
 import concurrent.futures
 from src.GoogleImageScraper import GoogleImageScraper
 from src.logging.logger import logger
@@ -12,6 +13,36 @@ from src.utils.cache_utils import initialize_shared_index, get_shared_index_stat
 
 cfg.CHROME_BINARY_PATH = EnvironmentResolver.auto_detect_chrome()
 cfg.WEBDRIVER_PATH = EnvironmentResolver.resolve_webdriver_path()
+
+# Global reference to browser pool for signal handling
+_browser_pool = None
+_shutdown_in_progress = False
+
+def signal_handler(signum, frame):
+    """Handle SIGINT (Ctrl+C) gracefully."""
+    global _browser_pool, _shutdown_in_progress
+    
+    if _shutdown_in_progress:
+        logger.warning("Force shutdown requested - exiting immediately")
+        sys.exit(1)
+    
+    _shutdown_in_progress = True
+    logger.warning("Shutdown signal received - initiating graceful shutdown...")
+    logger.info("Press Ctrl+C again to force immediate exit")
+    
+    if _browser_pool:
+        logger.info("Closing all browser instances...")
+        try:
+            _browser_pool.close_all()
+            logger.info("Browser cleanup completed")
+        except Exception as e:
+            logger.error(f"Error during browser cleanup: {e}")
+    
+    logger.warning("Graceful shutdown completed")
+    sys.exit(0)
+
+# Set up signal handler for SIGINT (Ctrl+C)
+signal.signal(signal.SIGINT, signal_handler)
 
 def load_categories_from_json(json_file_path):
     try:
@@ -44,16 +75,27 @@ def process_search_tasks(categories_data):
     return tasks
 
 def worker_thread(category_name, search_key, worker_id, browser_pool):
+    global _shutdown_in_progress
     prefix = f"[Task {worker_id}]"
     browser_info = None
     
     try:
+        # Check if shutdown is in progress before starting
+        if _shutdown_in_progress:
+            logger.info(f"{prefix} Skipping task - shutdown in progress")
+            return
+            
         logger.status(f"{prefix} Starting search for '{search_key}' in category '{category_name}'")
         
         # Acquire a browser from the pool
         browser_info = browser_pool.acquire_browser(worker_id)
         if not browser_info:
             logger.error(f"{prefix} Failed to acquire browser - aborting task")
+            return
+        
+        # Check again after acquiring browser
+        if _shutdown_in_progress:
+            logger.info(f"{prefix} Shutdown detected after browser acquisition - aborting")
             return
         
         logger.info(f"{prefix} Using browser {browser_info['id']} for '{search_key}'")
@@ -65,10 +107,11 @@ def worker_thread(category_name, search_key, worker_id, browser_pool):
             driver_instance=browser_info['driver']
         )
         
-        if not image_scraper.skip:
+        if not image_scraper.skip and not _shutdown_in_progress:
             image_urls = image_scraper.fetch_image_urls()
-
-            if image_urls:
+            
+            # Check for shutdown before downloading
+            if image_urls and not _shutdown_in_progress:
                 saved_count = image_scraper.download_images(image_urls)
                 
                 if saved_count > 0:
@@ -83,10 +126,17 @@ def worker_thread(category_name, search_key, worker_id, browser_pool):
         image_scraper.close()
         del image_scraper
 
-        logger.success(f"{prefix} Completed search for '{search_key}' in '{category_name}' using browser {browser_info['id']}")
+        if not _shutdown_in_progress:
+            logger.success(f"{prefix} Completed search for '{search_key}' in '{category_name}' using browser {browser_info['id']}")
+        else:
+            logger.info(f"{prefix} Task interrupted during execution")
 
+    except KeyboardInterrupt:
+        logger.info(f"{prefix} Received interrupt signal")
+        _shutdown_in_progress = True
     except Exception as e:
-        logger.error(f"{prefix} Failed processing '{search_key}' in '{category_name}': {e}")
+        if not _shutdown_in_progress:
+            logger.error(f"{prefix} Failed processing '{search_key}' in '{category_name}': {e}")
     finally:
         # Always release the browser back to the pool
         if browser_info:
@@ -107,6 +157,8 @@ def initialize_browser_pool(pool_size):
 
 def run_parallel_tasks(tasks, browser_pool):
     """Run tasks in parallel using the browser pool."""
+    global _shutdown_in_progress
+    
     pool_status = browser_pool.get_pool_status()
     logger.info(f"Starting parallel execution with {pool_status['total']} browsers available")
 
@@ -127,26 +179,59 @@ def run_parallel_tasks(tasks, browser_pool):
         completed_count = 0
         total_tasks = len(futures)
         
-        for future in concurrent.futures.as_completed(futures):
-            try:
-                future.result()
-                completed_count += 1
+        try:
+            for future in concurrent.futures.as_completed(futures):
+                if _shutdown_in_progress:
+                    logger.info("Shutdown in progress - cancelling remaining tasks...")
+                    for f in futures:
+                        f.cancel()
+                    break
                 
-                # Log progress every 5 completed tasks or on completion
-                if completed_count % 5 == 0 or completed_count == total_tasks:
-                    pool_status = browser_pool.get_pool_status()
-                    logger.info(f"Progress: {completed_count}/{total_tasks} tasks completed. "
-                              f"Browser pool: {pool_status['available']}/{pool_status['total']} available")
+                try:
+                    future.result()
+                    completed_count += 1
                     
-            except Exception as e:
-                logger.error(f"A worker thread encountered an unhandled error: {e}")
-                completed_count += 1
+                    # Log progress every 5 completed tasks or on completion
+                    if completed_count % 5 == 0 or completed_count == total_tasks:
+                        pool_status = browser_pool.get_pool_status()
+                        logger.info(f"Progress: {completed_count}/{total_tasks} tasks completed. "
+                                  f"Browser pool: {pool_status['available']}/{pool_status['total']} available")
+                        
+                except Exception as e:
+                    logger.error(f"A worker thread encountered an unhandled error: {e}")
+                    completed_count += 1
+                    
+        except KeyboardInterrupt:
+            logger.warning("KeyboardInterrupt detected in task execution")
+            _shutdown_in_progress = True
+            
+            # Cancel all pending futures
+            logger.info("Cancelling remaining tasks...")
+            for future in futures:
+                future.cancel()
+            
+            # Wait briefly for running tasks to complete
+            logger.info("Waiting for running tasks to complete...")
+            try:
+                for future in futures:
+                    if not future.cancelled():
+                        try:
+                            future.result(timeout=5.0)
+                        except (concurrent.futures.TimeoutError, Exception):
+                            pass
+            except Exception:
+                pass
+            
+            raise
     
-    # Wait for all browsers to be released
-    logger.info("Waiting for all browsers to be released...")
-    browser_pool.wait_for_all_released(timeout=30.0)
+    # Wait for all browsers to be released (only if not shutting down)
+    if not _shutdown_in_progress:
+        logger.info("Waiting for all browsers to be released...")
+        browser_pool.wait_for_all_released(timeout=30.0)
 
 def main_app():
+    global _browser_pool, _shutdown_in_progress
+    
     logger.set_verbose(False)
     
     categories_data = load_categories_from_json(cfg.CATEGORIES_FILE)
@@ -172,13 +257,32 @@ def main_app():
         logger.warning("Shared index initialization failed - falling back to file-based checks")
 
     # Initialize browser pool - use NUM_WORKERS as the pool size for optimal resource use
-    browser_pool = initialize_browser_pool(cfg.NUM_WORKERS)
+    _browser_pool = initialize_browser_pool(cfg.NUM_WORKERS)
     
     try:
-        run_parallel_tasks(tasks_to_run, browser_pool)
+        run_parallel_tasks(tasks_to_run, _browser_pool)
+        
+        if not _shutdown_in_progress:
+            logger.success("Image scraping completed successfully")
+            return 0
+        else:
+            logger.warning("Image scraping was interrupted")
+            return 1
+            
+    except KeyboardInterrupt:
+        logger.warning("Received interrupt signal - shutting down gracefully...")
+        return 1
+    except Exception as e:
+        logger.error(f"Unexpected error during execution: {e}")
+        return 1
     finally:
         # Ensure all browser instances are closed, even if errors occur during task execution
-        browser_pool.close_all()
+        if _browser_pool:
+            try:
+                _browser_pool.close_all()
+                logger.info("Browser pool cleanup completed")
+            except Exception as e:
+                logger.error(f"Error during browser pool cleanup: {e}")
         
         # Log final shared index stats
         try:
@@ -186,9 +290,6 @@ def main_app():
             logger.info(f"Final shared index stats: {final_stats.get('total_urls', 0)} URLs across {final_stats.get('total_categories', 0)} categories")
         except Exception:
             pass
-    
-    logger.success("Image scraping completed successfully")
-    return 0
 
 if __name__ == "__main__":
     exit_code = main_app()
