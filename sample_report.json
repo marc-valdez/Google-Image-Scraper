@@ -1,0 +1,89 @@
+{
+  "generated_at": "2025-06-02T18:46:03.540550",
+  "quantitative_statistics": {
+    "total_image_count": 47075,
+    "images_per_class": {
+      "Adobong Baboy": 384,
+      "Adobong Dilaw": 438
+    },
+    "images_per_category": {
+      "Grow": 14839,
+      "Glow": 16193,
+      "Go": 16043
+    },
+    "file_size": {
+      "average_bytes": 241093.88079921613,
+      "min_bytes": 596,
+      "max_bytes": 19426415,
+      "total_bytes": 11318393328
+    },
+    "dimensions": {
+      "avg_width": 979.6389438656778,
+      "avg_height": 853.6386828769656,
+      "min_width": 100,
+      "max_width": 19200,
+      "min_height": 89,
+      "max_height": 7023
+    },
+    "color_modes": {
+      "RGB": 43916,
+      "unknown": 964,
+      "RGBA": 1244,
+      "P": 760,
+      "L": 34,
+      "CMYK": 25
+    },
+    "formats": {
+      "jpeg": 37766,
+      "webp": 5845,
+      "png": 2369,
+      "jpg": 901,
+      "gif": 28,
+      "mpo": 34,
+      "pnj": 2,
+      "svg": 1
+    },
+    "hashes": {
+      "unique_count": 46942,
+      "duplicate_count": 4,
+      "total_count": 46946,
+      "duplicate_summary": {
+        "inter_class_duplicate_hashes": 1,
+        "intra_class_duplicate_hashes": 3,
+        "total_duplicate_hashes": 4,
+        "total_duplicate_files": 8
+      }
+    }
+  },
+  "temporal_statistics": {
+    "time_span": {
+      "earliest": "2025-05-24T09:57:21.152048",
+      "latest": "2025-05-31T10:34:17.448846",
+      "duration_hours": 168.61563799944443
+    },
+    "average_interval": {
+      "seconds": 12.9303716433699,
+      "minutes": 0.215506194056165
+    }
+  },
+  "quality_checks": {
+    "urls_found_but_missing_metadata": 129,
+    "total_urls_found": 47075,
+    "total_downloaded": 46946,
+    "classes_with_issues": [
+      {
+        "class": "Grow/Adobong Baboy",
+        "urls_found": 384,
+        "urls_downloaded": 383,
+        "missing_downloads": 1
+      },
+      {
+        "class": "Grow/Adobong Dilaw",
+        "urls_found": 438,
+        "urls_downloaded": 436,
+        "missing_downloads": 2
+      }
+    ],
+    "success_rate": 99.72596919808817
+  }
+}
