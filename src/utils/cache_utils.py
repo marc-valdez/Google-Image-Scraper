@@ -52,30 +52,30 @@ def remove_file_if_exists(file_path):
         return False
     
 
-def is_cache_complete(category_dir: str, class_name: str):
+def is_cache_complete(class_name: str):
     try:
-        metadata_file = cfg.get_image_metadata_file(category_dir, class_name)
+        metadata_file = cfg.get_image_metadata_file(class_name)
         base_output_dir = cfg.get_output_dir()
         
         if not os.path.isfile(metadata_file):
-            logger.warning(f"Missing metadata file for '{class_name}' in '{category_dir}'.")
+            logger.warning(f"Missing metadata file for '{class_name}'.")
             return False
 
         metadata = load_json_data(metadata_file)
         if not metadata:
-            logger.warning(f"Metadata is empty or invalid for '{class_name}' in '{category_dir}'.")
+            logger.warning(f"Metadata is empty or invalid for '{class_name}'.")
             return False
 
         images_dict = metadata.get('images', {})
         if not isinstance(images_dict, dict):
-            logger.warning(f"Invalid images dict for '{class_name}' in '{category_dir}'.")
+            logger.warning(f"Invalid images dict for '{class_name}'.")
             return False
 
         sorted_keys = sorted(images_dict.keys(), key=lambda k: int(k) if k.isdigit() else 0)
         target_keys = sorted_keys[:cfg.NUM_IMAGES_PER_CLASS]
         
         if len(target_keys) < cfg.NUM_IMAGES_PER_CLASS:
-            logger.warning(f"Cache not complete for '{class_name}' in '{category_dir}': Not enough URL records ({len(target_keys)}/{cfg.NUM_IMAGES_PER_CLASS}).")
+            logger.warning(f"Cache not complete for '{class_name}': Not enough URL records ({len(target_keys)}/{cfg.NUM_IMAGES_PER_CLASS}).")
             return False
 
         metadata_updated = False
@@ -136,36 +136,36 @@ def is_cache_complete(category_dir: str, class_name: str):
             logger.info(f"💾 Updated metadata after cleaning corrupted download_data")
 
         if verified_image_count < cfg.NUM_IMAGES_PER_CLASS:
-            logger.warning(f"Cache not complete for '{class_name}' in '{category_dir}': Only {verified_image_count}/{cfg.NUM_IMAGES_PER_CLASS} images verified and downloaded.")
+            logger.warning(f"Cache not complete for '{class_name}': Only {verified_image_count}/{cfg.NUM_IMAGES_PER_CLASS} images verified and downloaded.")
             return False
         
-        logger.info(f"✅ Cache is complete for '{class_name}' in '{category_dir}' - {verified_image_count}/{cfg.NUM_IMAGES_PER_CLASS} images verified.")
+        logger.info(f"✅ Cache is complete for '{class_name}' - {verified_image_count}/{cfg.NUM_IMAGES_PER_CLASS} images verified.")
         return True
         
     except Exception as e:
-        logger.error(f"Error checking cache completeness for '{class_name}' in '{category_dir}': {e}")
+        logger.error(f"Error checking cache completeness for '{class_name}': {e}")
         return False
 
-def is_url_duplicate_in_category(url: str, category_dir: str, current_class: str):
+def is_url_duplicate_in_category(url: str, nutritional_category: str, current_class: str):
     try:
         shared_index = get_shared_url_index()
-        return shared_index.is_url_duplicate_in_category(url, category_dir, current_class)
+        return shared_index.is_url_duplicate_in_category(url, nutritional_category, current_class)
     except Exception as e:
-        logger.error(f"Error checking URL duplication in category '{category_dir}': {e}")
+        logger.error(f"Error checking URL duplication in nutritional category '{nutritional_category}': {e}")
         return False
 
-def is_url_duplicate_across_categories(url: str, current_category: str = None, current_class: str = None):
+def is_url_duplicate_across_categories(url: str, current_nutritional_category: str = None, current_class: str = None):
     try:
         shared_index = get_shared_url_index()
-        return shared_index.is_url_duplicate_across_categories(url, current_category, current_class)
+        return shared_index.is_url_duplicate_across_categories(url, current_nutritional_category, current_class)
     except Exception as e:
         logger.error(f"Error checking URL duplication across categories: {e}")
         return False
 
-def add_url_to_shared_index(url: str, category_dir: str, class_name: str):
+def add_url_to_shared_index(url: str, nutritional_category: str, class_name: str):
     try:
         shared_index = get_shared_url_index()
-        shared_index.add_url(category_dir, class_name, url)
+        shared_index.add_url(nutritional_category, class_name, url)
     except Exception as e:
         logger.error(f"Error adding URL to shared index: {e}")
 

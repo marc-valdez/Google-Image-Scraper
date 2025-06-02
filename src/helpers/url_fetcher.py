@@ -24,23 +24,23 @@ def exponential_backoff(attempt, base=1, max_d=None):
     return min(base * (2 ** attempt), max_delay) + random.uniform(0, 0.1)
 
 class UrlFetcher:
-    def __init__(self, category_dir: str, class_name: str, worker_id: int, driver_instance=None):
+    def __init__(self, class_name: str, nutritional_category: str, worker_id: int, driver_instance=None):
         self.worker_id = worker_id
-        self.category_dir = category_dir
         self.class_name = class_name
+        self.nutritional_category = nutritional_category
         
         self.driver_manager = WebDriverManager(existing_driver=driver_instance)
         self.driver = self.driver_manager.driver
         
         self.query = class_name
         self.images_requested = cfg.NUM_IMAGES_PER_CLASS
-        self.cache_file_path = cfg.get_image_metadata_file(category_dir, class_name)
+        self.cache_file_path = cfg.get_image_metadata_file(class_name)
         
         self.current_xpath_index = 1
         self.consecutive_misses = 0
         self.consecutive_high_res_failures = 0
         
-        self.duplication_checker = DuplicationChecker(category_dir, class_name, worker_id)
+        self.duplication_checker = DuplicationChecker(class_name, nutritional_category, worker_id)
         
         params = {
             "as_st": "y",   # Advanced search type
@@ -223,6 +223,7 @@ class UrlFetcher:
                         save_json_data(self.cache_file_path, {
                             'search_urls_used': search_urls_used,
                             'search_key': self.query,
+                            'nutritional_category': self.nutritional_category,
                             'last_xpath_index': self.current_xpath_index,
                             'number_of_images_requested': self.images_requested,
                             'number_of_urls_found': len(found_urls),
@@ -285,6 +286,7 @@ class UrlFetcher:
         final_cache_data = {
             'search_urls_used': search_urls_used,
             'search_key': self.query,
+            'nutritional_category': self.nutritional_category,
             'last_xpath_index': 1,
             'number_of_images_requested': self.images_requested,
             'number_of_urls_found': len(found_urls),

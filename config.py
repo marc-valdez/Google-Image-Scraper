@@ -1,9 +1,10 @@
 import os
 import re
+import json
 from fake_useragent import UserAgent
 
-NUM_WORKERS = 3
-NUM_IMAGES_PER_CLASS = 500
+NUM_WORKERS = 1
+NUM_IMAGES_PER_CLASS = 5
 HEADLESS_MODE = False
 MAX_MISSED = 10
 MAX_CONSECUTIVE_HIGH_RES_FAILURES = 30
@@ -62,15 +63,48 @@ def format_filename(class_name: str, index: int) -> str:
     sanitized = sanitize_class_name(class_name)
     return f"{index:03}_{sanitized}"
 
-def get_image_metadata_file(category_dir: str, class_name: str) -> str:
+def get_image_metadata_file(class_name: str) -> str:
     """Returns path to the unified metadata file containing both fetch_data and download_data"""
-    return os.path.join(get_metadata_dir(category_dir, class_name), f"{sanitize_class_name(class_name)}_metadata.json")
+    return os.path.join(get_output_dir(), "metadata", f"{sanitize_class_name(class_name)}.json")
 
-def get_image_dir(category_dir: str, class_name: str) -> str:
-    return os.path.join(get_output_dir(), "images", category_dir, class_name)
+def get_image_dir(class_name: str) -> str:
+    return os.path.join(get_output_dir(), "images", class_name)
 
-def get_metadata_dir(category_dir: str, class_name: str) -> str:
-    return os.path.join(get_output_dir(), "metadata", category_dir, class_name)
+def get_metadata_dir(class_name: str) -> str:
+    return os.path.join(get_output_dir(), "metadata")
+
+def get_nutritional_category_mapping():
+    """Returns mapping of class names to nutritional categories"""
+    try:
+        with open(CATEGORIES_FILE, 'r') as f:
+            data = json.load(f)
+        
+        mapping = {}
+        for category, classes in data.items():
+            for class_name in classes:
+                mapping[class_name] = category
+        return mapping
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+def get_nutritional_category(class_name: str) -> str:
+    """Get nutritional category for a class name"""
+    mapping = get_nutritional_category_mapping()
+    return mapping.get(class_name, "Unknown")
+
+def get_all_classes_with_categories():
+    """Returns list of (class_name, nutritional_category) tuples"""
+    try:
+        with open(CATEGORIES_FILE, 'r') as f:
+            data = json.load(f)
+        
+        all_classes = []
+        for category, classes in data.items():
+            for class_name in classes:
+                all_classes.append((class_name, category))
+        return all_classes
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
 
 def ensure_base_directories():
     """Ensure the base images and metadata directories exist."""
@@ -84,12 +118,20 @@ def ensure_base_directories():
     
     return base_dir, images_dir, metadata_dir
 
-def ensure_class_directories(category_dir: str, class_name: str):
+def ensure_class_directories(class_name: str):
     """Ensure both image and metadata directories exist for a specific class."""
-    image_path = get_image_dir(category_dir, class_name)
-    metadata_path = get_metadata_dir(category_dir, class_name)
+    image_path = get_image_dir(class_name)
+    metadata_path = get_metadata_dir(class_name)
     
     os.makedirs(image_path, exist_ok=True)
     os.makedirs(metadata_path, exist_ok=True)
     
     return image_path, metadata_path
+
+def get_legacy_image_dir(category_dir: str, class_name: str) -> str:
+    """Legacy function for migration - returns old directory structure"""
+    return os.path.join(get_output_dir(), "images", category_dir, class_name)
+
+def get_legacy_metadata_dir(category_dir: str, class_name: str) -> str:
+    """Legacy function for migration - returns old directory structure"""
+    return os.path.join(get_output_dir(), "metadata", category_dir, class_name)

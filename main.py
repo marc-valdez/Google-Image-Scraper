@@ -67,14 +67,14 @@ def process_search_tasks(categories_data):
         for term in class_names:
             if isinstance(term, str) and term.strip():
                 tasks.append({
-                    'category': category,
+                    'nutritional_category': category,
                     'search_key': term.strip()
                 })
             else:
                 logger.warning(f"Skipping invalid search term in category '{category}'")
     return tasks
 
-def worker_thread(category_name, search_key, worker_id, browser_pool):
+def worker_thread(nutritional_category, search_key, worker_id, browser_pool):
     global _shutdown_in_progress
     prefix = f"[Task {worker_id}]"
     browser_info = None
@@ -85,7 +85,7 @@ def worker_thread(category_name, search_key, worker_id, browser_pool):
             logger.info(f"{prefix} Skipping task - shutdown in progress")
             return
             
-        logger.status(f"{prefix} Starting search for '{search_key}' in category '{category_name}'")
+        logger.status(f"{prefix} Starting search for '{search_key}' in nutritional category '{nutritional_category}'")
         
         # Acquire a browser from the pool
         browser_info = browser_pool.acquire_browser(worker_id)
@@ -101,8 +101,8 @@ def worker_thread(category_name, search_key, worker_id, browser_pool):
         logger.info(f"{prefix} Using browser {browser_info['id']} for '{search_key}'")
 
         image_scraper = GoogleImageScraper(
-            category_dir=category_name,
             class_name=search_key,
+            nutritional_category=nutritional_category,
             worker_id=worker_id,
             driver_instance=browser_info['driver']
         )
@@ -115,9 +115,9 @@ def worker_thread(category_name, search_key, worker_id, browser_pool):
                 saved_count = image_scraper.download_images(image_urls)
                 
                 if saved_count > 0:
-                    logger.success(f"{prefix} Downloaded {saved_count} images for '{search_key}' in '{category_name}' using browser {browser_info['id']}")
+                    logger.success(f"{prefix} Downloaded {saved_count} images for '{search_key}' in nutritional category '{nutritional_category}' using browser {browser_info['id']}")
                 else:
-                    logger.warning(f"{prefix} No new images downloaded for '{search_key}' in '{category_name}'")
+                    logger.warning(f"{prefix} No new images downloaded for '{search_key}' in nutritional category '{nutritional_category}'")
 
         # GoogleImageScraper.close() calls UrlFetcher.close(), which in turn calls
         # WebDriverManager.close_driver(). Since the driver is from an external pool,
@@ -127,7 +127,7 @@ def worker_thread(category_name, search_key, worker_id, browser_pool):
         del image_scraper
 
         if not _shutdown_in_progress:
-            logger.success(f"{prefix} Completed search for '{search_key}' in '{category_name}' using browser {browser_info['id']}")
+            logger.success(f"{prefix} Completed search for '{search_key}' in nutritional category '{nutritional_category}' using browser {browser_info['id']}")
         else:
             logger.info(f"{prefix} Task interrupted during execution")
 
@@ -136,7 +136,7 @@ def worker_thread(category_name, search_key, worker_id, browser_pool):
         _shutdown_in_progress = True
     except Exception as e:
         if not _shutdown_in_progress:
-            logger.error(f"{prefix} Failed processing '{search_key}' in '{category_name}': {e}")
+            logger.error(f"{prefix} Failed processing '{search_key}' in nutritional category '{nutritional_category}': {e}")
     finally:
         # Always release the browser back to the pool
         if browser_info:
@@ -168,7 +168,7 @@ def run_parallel_tasks(tasks, browser_pool):
             futures.append(
                 executor.submit(
                     worker_thread,
-                    task['category'],
+                    task['nutritional_category'],
                     task['search_key'],
                     worker_id_offset + 1,  # Worker ID for logging (1-based)
                     browser_pool

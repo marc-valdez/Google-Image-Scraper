@@ -33,8 +33,8 @@ class ImageDownloadReport:
         """Load all unified metadata files from metadata directories"""
         logger.status("Loading unified metadata files...")
         
-        # Use config function to construct metadata pattern
-        metadata_pattern = os.path.join(self.output_dir, "metadata", "*", "*", "*_metadata.json")
+        # Use flat metadata file structure pattern
+        metadata_pattern = os.path.join(self.output_dir, "metadata", "*.json")
         json_files = glob.glob(metadata_pattern)
         
         logger.info(f"Found {len(json_files)} unified metadata files")
@@ -49,10 +49,20 @@ class ImageDownloadReport:
                     logger.warning(f"Skipping non-unified format file: {Path(json_file).name}")
                     continue
                 
-                # Extract category and class from path
-                path_parts = Path(json_file).parts
-                data['category'] = path_parts[-3]  # output/metadata/<Category>/<Class>/file.json
-                data['class_name'] = path_parts[-2]
+                # Extract class name from filename (now flat: metadata/ClassName.json)
+                filename = Path(json_file).stem  # Gets filename without .json extension
+                data['class_name'] = data.get('search_key', filename)  # Use search_key or fallback to filename
+                
+                # Get nutritional category from metadata or determine from class name
+                if 'nutritional_category' in data:
+                    data['category'] = data['nutritional_category']
+                else:
+                    # Fallback: try to determine from config
+                    try:
+                        data['category'] = cfg.get_nutritional_category(data['class_name'])
+                    except:
+                        data['category'] = 'Unknown'
+                
                 data['file_path'] = json_file
                 
                 # Single unified data structure
@@ -377,7 +387,7 @@ def main(output_dir=None):
         report.load_metadata()
         if not report.image_data:
             logger.error("No unified metadata files found. Please ensure data exists in unified format.")
-            logger.info("Expected format: output/metadata/<Category>/<Class>/*_metadata.json")
+            logger.info("Expected format: output/metadata/<ClassName>.json")
             return 1
         
         # Generate reports

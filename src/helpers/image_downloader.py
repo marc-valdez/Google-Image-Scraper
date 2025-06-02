@@ -14,17 +14,17 @@ import config as cfg
 
 
 class ImageDownloader:
-    def __init__(self, category_dir: str, class_name: str, worker_id: int):
+    def __init__(self, class_name: str, nutritional_category: str, worker_id: int):
         self.class_name = class_name
+        self.nutritional_category = nutritional_category
         self.worker_id = worker_id
-        self.category_dir = category_dir
-        self.image_path = cfg.get_image_dir(category_dir, class_name)
+        self.image_path = cfg.get_image_dir(class_name)
         self.base_dir = cfg.get_output_dir()
         self.http_client = OptimizedHTTPClient()
 
 
     def _load_metadata(self) -> dict:
-        meta_file = cfg.get_image_metadata_file(self.category_dir, self.class_name)
+        meta_file = cfg.get_image_metadata_file(self.class_name)
         return load_json_data(meta_file) or {}
 
     def _prepare_download_list(self, images_dict: dict) -> list:
@@ -110,7 +110,7 @@ class ImageDownloader:
             logger.warning(f"[Worker {self.worker_id}] No images found in metadata for '{self.class_name}'")
             return 0
         
-        meta_file = cfg.get_image_metadata_file(self.category_dir, self.class_name)
+        meta_file = cfg.get_image_metadata_file(self.class_name)
         to_download = self._prepare_download_list(images_dict)
         
         # Save metadata after cleaning up corrupted records

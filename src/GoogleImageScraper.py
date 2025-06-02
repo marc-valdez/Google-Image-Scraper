@@ -6,24 +6,25 @@ from src.helpers.image_downloader import ImageDownloader
 from src.logging.logger import logger
 
 class GoogleImageScraper:
-    def __init__(self, category_dir: str, class_name: str, worker_id: int, driver_instance=None):
-        self.category_dir = category_dir
+    def __init__(self, class_name: str, nutritional_category: str, worker_id: int, driver_instance=None):
+        self.class_name = class_name
+        self.nutritional_category = nutritional_category
         self.worker_id = worker_id
 
         self.query = class_name
         
-        if is_cache_complete(self.category_dir, class_name):
+        if is_cache_complete(class_name):
             logger.info(f"[Worker {self.worker_id}] Skipping scraper for '{self.query}' — already completed")
             self.skip = True
             return
         self.skip = False
 
-        self.image_path, self.metadata_dir = cfg.ensure_class_directories(self.category_dir, class_name)
+        self.image_path, self.metadata_dir = cfg.ensure_class_directories(class_name)
 
         # Pass the driver_instance to UrlFetcher
-        self.url_fetcher = UrlFetcher(self.category_dir, class_name, self.worker_id, driver_instance=driver_instance)
-        self.image_downloader = ImageDownloader(self.category_dir, class_name, self.worker_id)
-        logger.info(f"[Worker {self.worker_id}] Initialized scraper for '{self.query}'")
+        self.url_fetcher = UrlFetcher(class_name, nutritional_category, self.worker_id, driver_instance=driver_instance)
+        self.image_downloader = ImageDownloader(class_name, nutritional_category, self.worker_id)
+        logger.info(f"[Worker {self.worker_id}] Initialized scraper for '{self.query}' (nutritional category: {nutritional_category})")
 
     def fetch_image_urls(self):
         if self.skip:
